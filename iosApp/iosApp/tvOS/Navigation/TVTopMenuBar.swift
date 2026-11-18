@@ -135,6 +135,8 @@ enum TVRootDestination: Hashable {
     case recommendations
     case libraryType(TVLibraryTabType)
     case calendar
+    /// An Emby, Jellyfin, or Plex library, shown beside Silo's tabs.
+    case mediaServer(MSTVTab)
 
     var title: LocalizedStringResource {
         switch self {
@@ -142,6 +144,7 @@ enum TVRootDestination: Hashable {
         case .recommendations: return .topBarForYou
         case .libraryType(let type): return type.label
         case .calendar: return .topBarCalendar
+        case .mediaServer(let tab): return LocalizedStringResource(String.LocalizationValue(tab.title))
         }
     }
 
@@ -611,7 +614,7 @@ struct TVTopMenuBar: View {
         switch root {
         case .libraryType, .recommendations:
             return .root(root)
-        case .home, .calendar:
+        case .home, .calendar, .mediaServer:
             return nil
         }
     }
@@ -622,7 +625,7 @@ struct TVTopMenuBar: View {
             return AppLanguage.string(.topBarHintLibraries)
         case .recommendations:
             return AppLanguage.string(.topBarHintForYou)
-        case .home, .calendar:
+        case .home, .calendar, .mediaServer:
             return ""
         }
     }

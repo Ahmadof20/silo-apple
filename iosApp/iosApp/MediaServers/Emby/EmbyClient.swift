@@ -10,7 +10,7 @@ struct EmbyClient: MediaServerClient {
     private var base: String { account.baseURL }
     private var userId: String { account.userId }
 
-    private static let listFields = "Overview,Genres,ProductionYear,OfficialRating,CommunityRating,PrimaryImageAspectRatio"
+    private static let listFields = "Overview,Genres,ProductionYear,OfficialRating,CommunityRating,PrimaryImageAspectRatio,ProviderIds"
     private static let ticksPerSecond = 10_000_000.0
 
     // MARK: - Sign in
@@ -150,12 +150,13 @@ struct EmbyClient: MediaServerClient {
         let OfficialRating: String?
         let CommunityRating: Double?
         let MediaSources: [MediaSource]?
+        let ProviderIds: [String: String]?
 
         enum CodingKeys: String, CodingKey {
             case Id, Name, kind = "Type", CollectionType, IsFolder, Overview, ProductionYear, RunTimeTicks
             case UserData, ImageTags, BackdropImageTags, ParentBackdropItemId, ParentBackdropImageTags
             case ParentThumbItemId, ParentThumbImageTag, SeriesId, SeriesName, SeriesPrimaryImageTag
-            case SeasonId, ParentIndexNumber, IndexNumber, Genres, OfficialRating, CommunityRating, MediaSources
+            case SeasonId, ParentIndexNumber, IndexNumber, Genres, OfficialRating, CommunityRating, MediaSources, ProviderIds
         }
     }
 
@@ -222,7 +223,9 @@ struct EmbyClient: MediaServerClient {
             episodeNumber: kind == .episode ? dto.IndexNumber : nil,
             genres: dto.Genres ?? [],
             officialRating: dto.OfficialRating,
-            communityRating: dto.CommunityRating
+            communityRating: dto.CommunityRating,
+            tmdbId: Self.providerId("tmdb", in: dto.ProviderIds),
+            imdbId: Self.providerId("imdb", in: dto.ProviderIds)
         )
     }
 
@@ -407,6 +410,24 @@ struct EmbyClient: MediaServerClient {
 
     func setWatched(_ watched: Bool, item: MSItem) async throws {
         try await post("/Users/\(userId)/PlayedItems/\(item.id)", method: watched ? "POST" : "DELETE")
+    }
+
+    func saveResume(_ item: MSItem, position: Double) async throws {
+        let body: [String: Any] = ["PlaybackPositionTicks": Int64(max(0, position) * Self.ticksPerSecond)]
+        do {
+            // Emby and Jellyfin up to 10.8.
+            try await post("/Users/\(userId)/Items/\(item.id)/UserData", body: body)
+        } catch MediaServerError.http(let code) where code == 404 || code == 405 {
+            // Jellyfin 10.9 and later.
+            try await post("/UserItems/\(item.id)/UserData", ["userId": userId], body: body)
+        }
+    }
+
+    /// Provider ids arrive as "Tmdb", "tmdb", or "TMDB" depending on the server.
+    static func providerId(_ name: String, in ids: [String: String]?) -> String? {
+        guard let ids else { return nil }
+        for (key, value) in ids where key.lowercased() == name && !value.isEmpty { return value }
+        return nil
     }
 }
 #endif

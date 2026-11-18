@@ -144,6 +144,14 @@ private struct TVRootPage: View, Equatable {
                 isTopMenuFocused: menuOwnsFocus,
                 onTopMenuFocusRequest: requestTopMenuFocus
             )
+        case .root(.mediaServer(let tab)):
+            TVMediaServerLibraryPage(
+                tab: tab,
+                focusRequest: focusRequest,
+                isTopMenuFocused: menuOwnsFocus,
+                onTopMenuFocusRequest: requestTopMenuFocus
+            )
+            .id(tab)
         case .personal(.watchlist):
             WatchlistView(
                 showsNavigationTitle: false,
@@ -206,6 +214,8 @@ struct TVMainTabView: View {
     @State private var accountDirectory = AccountDirectory.shared
     @State private var librariesStaleSinceBackground = false
     @State private var registry = ServerRegistry.shared
+    @State private var mediaServerTabs = MSTVTabStore.shared
+    @State private var mediaServerStore = MediaServerStore.shared
     /// Local, per-profile Audiobooks opt-in for the bar's Audiobooks tab.
     /// Kept here so `.task` can `refresh()` it for the now-known profile.
     @State private var navPrefs = AppNavPreferences.shared
@@ -466,6 +476,10 @@ struct TVMainTabView: View {
         }
         .task(id: currentLibraryAuthority) {
             await loadLibraries(for: currentLibraryAuthority)
+        }
+        // Emby, Jellyfin, and Plex tabs follow the saved server accounts.
+        .task(id: mediaServerStore.accounts.map(\.id)) {
+            await mediaServerTabs.refresh()
         }
         .onChange(of: closesRequestsRoot, initial: true) { _, close in
             guard close else { return }
@@ -752,7 +766,7 @@ struct TVMainTabView: View {
             switch root {
             case .libraryType, .recommendations:
                 return .root(root)
-            case .home, .calendar:
+            case .home, .calendar, .mediaServer:
                 return nil
             }
         }
@@ -877,7 +891,7 @@ struct TVMainTabView: View {
                 cascadePanel(for: type, isActive: isActive)
             case .recommendations:
                 forYouPanel(isActive: isActive)
-            case .home, .calendar:
+            case .home, .calendar, .mediaServer:
                 EmptyView()
             }
         case .profile:
@@ -1314,10 +1328,16 @@ struct TVMainTabView: View {
     /// The bar's content tabs. Search and Profile sit outside this list, and
     /// Requests lives in the profile menu.
     private var visibleRoots: [TVRootDestination] {
-        TVRootDestination.visibleRoots(
+        var roots = TVRootDestination.visibleRoots(
             libraries: libraries,
             showAudiobooks: navPrefs.showAudiobooks
         )
+        // Emby, Jellyfin, and Plex libraries sit right after Silo's own
+        // library tabs, before For You and Calendar.
+        let serverRoots = mediaServerTabs.tabs.map(TVRootDestination.mediaServer)
+        let insertAt = roots.firstIndex(of: .recommendations) ?? roots.endIndex
+        roots.insert(contentsOf: serverRoots, at: insertAt)
+        return roots
     }
 
     private func tabType(for library: Library) -> TVLibraryTabType? {

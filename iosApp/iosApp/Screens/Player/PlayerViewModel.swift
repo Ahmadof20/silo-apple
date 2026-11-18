@@ -4591,6 +4591,20 @@ class PlayerViewModel {
     /// Series and synthetic season ids are included because tvOS keeps the
     /// combined Series page resident while its episode player is pushed.
     private func recordCurrentPlaybackMutation() {
+        #if !os(macOS)
+        // Titles opened from an Emby, Jellyfin, or Plex tab write their
+        // watched state back to that server too.
+        if let detail = currentWatchDetail {
+            MSSiloBridge.shared.siloPlaybackEnded(
+                contentId: detail.contentId,
+                seriesId: detail.seriesId,
+                seasonNumber: detail.seasonNumber,
+                episodeNumber: detail.episodeNumber,
+                position: completionProgressPositionForCurrentItem(),
+                duration: duration
+            )
+        }
+        #endif
         let currentContentId = currentWatchDetail?.contentId ?? lastLoadRequest?.contentId
         if let currentContentId, !currentContentId.isEmpty {
             contentIdsNeedingDetailRefresh.insert(currentContentId)

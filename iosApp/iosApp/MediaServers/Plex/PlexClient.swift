@@ -236,12 +236,14 @@ struct PlexClient: MediaServerClient {
         let rating: Double?
         let genres: [Tag]?
         let media: [Media]?
+        let guids: [Tag2]?
+        struct Tag2: Decodable { let id: String? }
 
         enum CodingKeys: String, CodingKey {
             case ratingKey, type, title, summary, year, duration, viewOffset, viewCount, leafCount, viewedLeafCount
             case thumb, art, parentThumb, grandparentThumb, grandparentArt, grandparentTitle, grandparentRatingKey
             case parentRatingKey, parentIndex, index, contentRating, audienceRating, rating
-            case genres = "Genre", media = "Media"
+            case genres = "Genre", media = "Media", guids = "Guid"
         }
     }
 
@@ -259,7 +261,18 @@ struct PlexClient: MediaServerClient {
     }
 
     private func list(_ path: String, _ query: [String: String?] = [:]) async throws -> MetadataList {
-        try await get(path, query, as: Container<MetadataList>.self).MediaContainer
+        var query = query
+        query["includeGuids"] = "1"
+        return try await get(path, query, as: Container<MetadataList>.self).MediaContainer
+    }
+
+    /// Plex lists external ids as "tmdb://603" or "imdb://tt0133093".
+    static func guid(_ scheme: String, in guids: [Metadata.Tag2]?) -> String? {
+        let prefix = scheme + "://"
+        for id in (guids ?? []).compactMap({ $0.id }) where id.hasPrefix(prefix) {
+            return String(id.dropFirst(prefix.count))
+        }
+        return nil
     }
 
     // MARK: - Mapping
@@ -320,7 +333,9 @@ struct PlexClient: MediaServerClient {
             episodeNumber: kind == .episode ? m.index : nil,
             genres: (m.genres ?? []).compactMap(\.tag),
             officialRating: m.contentRating,
-            communityRating: m.audienceRating ?? m.rating
+            communityRating: m.audienceRating ?? m.rating,
+            tmdbId: Self.guid("tmdb", in: m.guids),
+            imdbId: Self.guid("imdb", in: m.guids)
         )
     }
 
@@ -479,6 +494,15 @@ struct PlexClient: MediaServerClient {
         try await call(watched ? "/:/scrobble" : "/:/unscrobble", [
             "identifier": "com.plexapp.plugins.library",
             "key": item.id,
+        ])
+    }
+
+    func saveResume(_ item: MSItem, position: Double) async throws {
+        try await call("/:/progress", [
+            "identifier": "com.plexapp.plugins.library",
+            "key": item.id,
+            "time": String(Int(max(0, position) * 1000)),
+            "state": "stopped",
         ])
     }
 }

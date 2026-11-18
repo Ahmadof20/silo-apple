@@ -81,6 +81,9 @@ struct MSItem: Identifiable, Hashable {
     var genres: [String] = []
     var officialRating: String?
     var communityRating: Double?
+    /// External ids, used to find the same title on the Silo server.
+    var tmdbId: String? = nil
+    var imdbId: String? = nil
 
     var isPlayable: Bool {
         switch kind {

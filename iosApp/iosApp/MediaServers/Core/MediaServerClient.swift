@@ -19,6 +19,9 @@ protocol MediaServerClient {
     func playbackSource(for item: MSItem, resume: Bool) async throws -> MSPlaybackSource
     func report(_ state: MSPlaybackState, item: MSItem, source: MSPlaybackSource, position: Double, isPaused: Bool) async
     func setWatched(_ watched: Bool, item: MSItem) async throws
+    /// Saves a resume point without a playback session, for titles watched
+    /// in the Silo player.
+    func saveResume(_ item: MSItem, position: Double) async throws
 }
 
 /// Small shared HTTP layer for the Emby and Plex clients.
