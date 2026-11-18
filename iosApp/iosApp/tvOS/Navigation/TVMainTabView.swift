@@ -344,7 +344,71 @@ struct TVMainTabView: View {
         TVShellPlace(root: selectedRoot, personalRoot: personalRoot, pillSelections: pillSelections)
     }
 
+    // The shell is split into three pieces so each modifier chain stays
+    // small enough for the Swift type checker in older Xcode releases.
     var body: some View {
+        shellLifecycle
+        .onChange(of: isTopMenuFocused) { _, isFocused in
+            guard isFocused, isTopMenuFocusSuppressed else { return }
+            unlockBar()
+            isTopMenuFocusSuppressed = false
+        }
+        .onChange(of: topMenuFocusRelay.request) { _, _ in
+            focusTopMenuIfVisible()
+        }
+        .onChange(of: barFocusedPanel) { _, focused in
+            if focused != nil, focused == pendingBarReturn {
+                pendingBarReturn = nil
+            }
+        }
+        .onChange(of: router.requestedTab) { _, requestedTab in
+            guard let requestedTab else { return }
+            router.requestedTab = nil
+
+            // tvOS owns a custom root selector rather than MainTabView's
+            // AppTab binding. Settings uses this one-shot request so its
+            // final Menu/Back exits to Home regardless of the prior root.
+            if requestedTab == .home {
+                selectRoot(.home)
+            }
+        }
+        .onChange(of: router.requestedSearch) { _, _ in
+            openRequestedSearch()
+        }
+        .onChange(of: visibleRoots) { _, _ in
+            reconcileVisibleRootsChange()
+        }
+        .onDisappear {
+            controlReceiver.stop()
+        }
+        .onChange(of: ServerRegistry.shared.activeServerId) {
+            controlReceiver.start(router: router)
+        }
+        .onChange(of: ServerRegistry.shared.activeServer?.displayName) {
+            controlReceiver.start(router: router)
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            // Returning from a suspension can leave the Bonjour listener dead
+            // (its state handler nils it out); restart so phones can still
+            // find this TV. No-op when the listener is healthy.
+            if newPhase == .background { librariesStaleSinceBackground = true }
+            guard newPhase == .active else { return }
+            controlReceiver.start(router: router)
+            // Libraries refresh only on a real return from background, not on
+            // an `.inactive` blip such as the TV button's Control Center.
+            guard librariesStaleSinceBackground else { return }
+            librariesStaleSinceBackground = false
+            let authority = currentLibraryAuthority
+            Task { await loadLibraries(for: authority) }
+        }
+        .tvFocusWatchdog(
+            isActive: focusWatchdogIsActive,
+            onRepair: { attempt in repairLostFocus(attempt: attempt) }
+        )
+    }
+
+    /// The bar, the page stack, their overlays, and full-screen covers.
+    private var shellPresented: some View {
         ZStack(alignment: .top) {
             NavigationStack(path: $router.path) {
                 rootContent
@@ -461,6 +525,11 @@ struct TVMainTabView: View {
         // Outside the presentation modifiers so presented covers (audio
         // player) inherit the router — ErrorView requires it and traps
         // when it's absent.
+    }
+
+    /// `shellPresented` plus its environment and lifecycle tasks.
+    private var shellLifecycle: some View {
+        shellPresented
         .environment(router)
         .task {
             // Re-read tab-visibility prefs for the now-known profile (the
@@ -527,63 +596,6 @@ struct TVMainTabView: View {
         // Up reaches the bar natively now, without `focusTopMenuIfVisible`.
         // Record the ownership change so the menu state stays truthful: pages
         // stop entry claims, and Menu/Back and dwell work from the bar.
-        .onChange(of: isTopMenuFocused) { _, isFocused in
-            guard isFocused, isTopMenuFocusSuppressed else { return }
-            unlockBar()
-            isTopMenuFocusSuppressed = false
-        }
-        .onChange(of: topMenuFocusRelay.request) { _, _ in
-            focusTopMenuIfVisible()
-        }
-        .onChange(of: barFocusedPanel) { _, focused in
-            if focused != nil, focused == pendingBarReturn {
-                pendingBarReturn = nil
-            }
-        }
-        .onChange(of: router.requestedTab) { _, requestedTab in
-            guard let requestedTab else { return }
-            router.requestedTab = nil
-
-            // tvOS owns a custom root selector rather than MainTabView's
-            // AppTab binding. Settings uses this one-shot request so its
-            // final Menu/Back exits to Home regardless of the prior root.
-            if requestedTab == .home {
-                selectRoot(.home)
-            }
-        }
-        .onChange(of: router.requestedSearch) { _, _ in
-            openRequestedSearch()
-        }
-        .onChange(of: visibleRoots) { _, _ in
-            reconcileVisibleRootsChange()
-        }
-        .onDisappear {
-            controlReceiver.stop()
-        }
-        .onChange(of: ServerRegistry.shared.activeServerId) {
-            controlReceiver.start(router: router)
-        }
-        .onChange(of: ServerRegistry.shared.activeServer?.displayName) {
-            controlReceiver.start(router: router)
-        }
-        .onChange(of: scenePhase) { _, newPhase in
-            // Returning from a suspension can leave the Bonjour listener dead
-            // (its state handler nils it out); restart so phones can still
-            // find this TV. No-op when the listener is healthy.
-            if newPhase == .background { librariesStaleSinceBackground = true }
-            guard newPhase == .active else { return }
-            controlReceiver.start(router: router)
-            // Libraries refresh only on a real return from background, not on
-            // an `.inactive` blip such as the TV button's Control Center.
-            guard librariesStaleSinceBackground else { return }
-            librariesStaleSinceBackground = false
-            let authority = currentLibraryAuthority
-            Task { await loadLibraries(for: authority) }
-        }
-        .tvFocusWatchdog(
-            isActive: focusWatchdogIsActive,
-            onRepair: { attempt in repairLostFocus(attempt: attempt) }
-        )
     }
 
     /// The watchdog's reading is only actionable while this shell's focus graph
