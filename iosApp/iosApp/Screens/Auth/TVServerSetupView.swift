@@ -28,6 +28,8 @@ struct TVServerSetupView: View {
     @Environment(\.locale) private var locale
     /// Where focus goes once the system keyboard closes after Done.
     @State private var focusAfterKeyboard: Field?
+    /// The separate Emby / Jellyfin / Plex section (MediaServers/).
+    @State private var showsMediaServers = false
 
     private enum Field: Hashable {
         case enterAddress
@@ -38,6 +40,7 @@ struct TVServerSetupView: View {
         case port
         case connect
         case back
+        case mediaServers
     }
 
     /// True once a phone is on the line; the screen hands over to the pairing screens.
@@ -88,6 +91,9 @@ struct TVServerSetupView: View {
             Task { await coordinator.cancel() }
         }
         .serverInsecurePromptAlert(viewModel, router: router)
+        .fullScreenCover(isPresented: $showsMediaServers) {
+            MediaServersHubView()
+        }
     }
 
     /// After a phone finishes (contract §B.7). One account signed in opens
@@ -170,6 +176,15 @@ struct TVServerSetupView: View {
                 }
                 .buttonStyle(.marquee(.glass, fullWidth: false))
                 .focused($focusedField, equals: .enterAddress)
+
+                Button {
+                    guard !viewModel.isLoading else { return }
+                    showsMediaServers = true
+                } label: {
+                    Label("Emby, Jellyfin & Plex", systemImage: "server.rack")
+                }
+                .buttonStyle(.marquee(.glass, fullWidth: false))
+                .focused($focusedField, equals: .mediaServers)
 
                 if canReturnToPicker {
                     Button(.signInBackToProfiles) { returnToPicker() }

@@ -1,0 +1,103 @@
+name: Build unsigned IPAs (Emby & Plex fork)
+
+# Builds the app on a GitHub-hosted Mac, so no Mac of your own is needed.
+# The upstream workflows use a private `xcode-27` runner a fork can't reach.
+# Output: unsigned .ipa files under the run's Artifacts. Sign and install them
+# with Sideloadly, AltStore, or SideStore using your own Apple ID.
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Which app to build
+        type: choice
+        default: ios
+        options: [ios, tvos, both]
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ios
+            scheme: Silo
+            sdk: iphoneos
+            destination: generic/platform=iOS
+          - platform: tvos
+            scheme: SiloTV
+            sdk: appletvos
+            destination: generic/platform=tvOS
+    steps:
+      - name: Skip unselected platform
+        id: gate
+        env:
+          WANTED: ${{ inputs.platform }}
+          THIS: ${{ matrix.platform }}
+        run: |
+          if [ "$WANTED" = "both" ] || [ "$WANTED" = "$THIS" ]; then echo "run=true" >> "$GITHUB_OUTPUT"; else echo "run=false" >> "$GITHUB_OUTPUT"; fi
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.run == 'true'
+        with:
+          persist-credentials: false
+
+      - name: Use the newest installed Xcode
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          XCODE="$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        if: steps.gate.outputs.run == 'true'
+        run: brew install xcodegen
+
+      - name: Generate project
+        if: steps.gate.outputs.run == 'true'
+        working-directory: iosApp
+        run: xcodegen generate
+
+      - name: Archive (unsigned)
+        if: steps.gate.outputs.run == 'true'
+        working-directory: iosApp
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project Silo.xcodeproj \
+            -scheme "${{ matrix.scheme }}" \
+            -sdk "${{ matrix.sdk }}" \
+            -destination "${{ matrix.destination }}" \
+            -configuration Release \
+            -archivePath "$RUNNER_TEMP/app.xcarchive" \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            | tee "$RUNNER_TEMP/build.log" | grep -E "error:|warning: .*MediaServers|BUILD|ARCHIVE" || true
+          test -d "$RUNNER_TEMP/app.xcarchive/Products/Applications"
+
+      - name: Package IPA
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          cd "$RUNNER_TEMP"
+          rm -rf Payload && mkdir Payload
+          cp -R app.xcarchive/Products/Applications/*.app Payload/
+          zip -qry "${{ matrix.scheme }}-unsigned.ipa" Payload
+          ls -lh *.ipa
+
+      - uses: actions/upload-artifact@v4
+        if: steps.gate.outputs.run == 'true'
+        with:
+          name: ${{ matrix.scheme }}-unsigned-ipa
+          path: ${{ runner.temp }}/${{ matrix.scheme }}-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.gate.outputs.run == 'true'
+        with:
+          name: ${{ matrix.scheme }}-build-log
+          path: ${{ runner.temp }}/build.log

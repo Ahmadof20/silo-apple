@@ -14,6 +14,8 @@ struct ServerSetupView: View {
     /// Whether Continue was pressed with the keyboard up. Recents stay hidden
     /// for that attempt so they don't pop in as the screen fades to sign-in.
     @State private var submittedWithKeyboard = false
+    /// The separate Emby / Jellyfin / Plex section (MediaServers/).
+    @State private var showsMediaServers = false
 
     private enum Field: Hashable { case host, port }
 
@@ -115,7 +117,23 @@ struct ServerSetupView: View {
             .disabled(viewModel.isLoading)
             .keyboardShortcut(.defaultAction)
             .padding(.top, 22)
+
+            #if os(iOS)
+            Button {
+                showsMediaServers = true
+            } label: {
+                Label("Emby, Jellyfin & Plex", systemImage: "server.rack")
+            }
+            .buttonStyle(.marquee(.glass))
+            .disabled(viewModel.isLoading)
+            .padding(.top, 12)
+            #endif
         }
+        #if os(iOS)
+        .fullScreenCover(isPresented: $showsMediaServers) {
+            MediaServersHubView()
+        }
+        #endif
         .animation(.easeInOut(duration: 0.2), value: viewModel.error)
         .animation(.easeInOut(duration: 0.2), value: viewModel.discoveryError)
         .animation(SiloTheme.springAnimation, value: viewModel.showsAdvancedOptions)

@@ -16,6 +16,8 @@ struct IOSSettingsOverview: View {
     @State private var experimental = ExperimentalFeatures.shared
     @State private var searchText = ""
     @State private var showsSignInTV = false
+    /// The separate Emby / Jellyfin / Plex section (MediaServers/).
+    @State private var showsMediaServers = false
     @State private var accountSignIn = AccountSignInModel.live()
     @Environment(\.locale) private var locale
 
@@ -57,6 +59,22 @@ struct IOSSettingsOverview: View {
                     experimentalSection
                 }
 
+                if searchText.isEmpty {
+                    Section {
+                        Button {
+                            showsMediaServers = true
+                        } label: {
+                            SettingsOverviewRow(
+                                title: "Emby, Jellyfin & Plex",
+                                subtitle: "Browse and play from your other media servers",
+                                systemImage: "server.rack",
+                                showsChevron: true
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
                 if matchesAboutSection {
                     aboutSection
                 }
@@ -82,6 +100,9 @@ struct IOSSettingsOverview: View {
         .siloToolbarColorSchemeDark()
         .onAppear(perform: navPrefs.refresh)
         .task { await accountSignIn.load() }
+        .fullScreenCover(isPresented: $showsMediaServers) {
+            MediaServersHubView()
+        }
         .sheet(isPresented: $showsSignInTV) {
             SignInTVView(onAddAccount: { server, link, choosingAccount in
                 showsSignInTV = false

@@ -21,6 +21,8 @@ struct TVSettingsView: View {
     @State private var experimental = ExperimentalFeatures.shared
     @State private var showPrivacyPolicy = false
     @State private var showOpenSourceAcknowledgements = false
+    /// The separate Emby / Jellyfin / Plex section (MediaServers/).
+    @State private var showsMediaServers = false
     @State private var selectedCategory: TVSettingsCategory = .general
     @State private var activePicker: TVSettingsPickerRequest?
     @State private var pendingPickerFocus: TVSettingsDetailFocus?
@@ -530,6 +532,23 @@ struct TVSettingsView: View {
             }
             .buttonStyle(TVSettingsPaneRowStyle())
             .focused($detailFocus, equals: .top)
+
+            Button { showsMediaServers = true } label: {
+                HStack(spacing: 16) {
+                    Image(systemName: "server.rack")
+                        .font(.system(size: 22, weight: .medium))
+                    Text("Emby, Jellyfin & Plex")
+                        .font(.system(size: 26))
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.forward")
+                        .font(.system(size: 18, weight: .semibold))
+                        .opacity(0.55)
+                }
+            }
+            .buttonStyle(TVSettingsPaneRowStyle())
+            .fullScreenCover(isPresented: $showsMediaServers) {
+                MediaServersHubView()
+            }
 
             TVSettingsSectionHeader(.settingsAboutHeaderTv)
 
