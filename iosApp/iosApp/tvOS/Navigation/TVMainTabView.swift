@@ -215,7 +215,6 @@ struct TVMainTabView: View {
     @State private var librariesStaleSinceBackground = false
     @State private var registry = ServerRegistry.shared
     @State private var mediaServerTabs = MSTVTabStore.shared
-    @State private var mediaServerStore = MediaServerStore.shared
     /// Local, per-profile Audiobooks opt-in for the bar's Audiobooks tab.
     /// Kept here so `.task` can `refresh()` it for the now-known profile.
     @State private var navPrefs = AppNavPreferences.shared
@@ -349,6 +348,8 @@ struct TVMainTabView: View {
         ZStack(alignment: .top) {
             NavigationStack(path: $router.path) {
                 rootContent
+                    // Emby, Jellyfin, and Plex tabs follow the saved accounts.
+                    .modifier(MSTVTabRefresh())
                     .prefersDefaultFocus(router.path.isEmpty, in: shellFocusNamespace)
                     .onPreferenceChange(TVPagePanelOpenKey.self) { isOpen in
                         isBarLockedByPagePanel = isOpen
@@ -476,10 +477,6 @@ struct TVMainTabView: View {
         }
         .task(id: currentLibraryAuthority) {
             await loadLibraries(for: currentLibraryAuthority)
-        }
-        // Emby, Jellyfin, and Plex tabs follow the saved server accounts.
-        .task(id: mediaServerStore.accounts.map(\.id)) {
-            await mediaServerTabs.refresh()
         }
         .onChange(of: closesRequestsRoot, initial: true) { _, close in
             guard close else { return }

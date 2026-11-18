@@ -61,6 +61,17 @@ final class MSTVTabStore {
     }
 }
 
+/// Refreshes the media-server tabs whenever the saved accounts change.
+struct MSTVTabRefresh: ViewModifier {
+    @State private var store = MediaServerStore.shared
+
+    func body(content: Content) -> some View {
+        content.task(id: store.accounts.map { $0.id }) {
+            await MSTVTabStore.shared.refresh()
+        }
+    }
+}
+
 /// A media-server library page under the top bar. A title Silo also has
 /// opens in Silo's own detail page (translation, subtitles, AI subtitles);
 /// anything else opens the media server's own detail page and player.
