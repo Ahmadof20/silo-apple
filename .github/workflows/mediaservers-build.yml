@@ -81,8 +81,13 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            | tee "$RUNNER_TEMP/build.log" | grep -E "error:|warning: .*MediaServers|BUILD|ARCHIVE" || true
-          test -d "$RUNNER_TEMP/app.xcarchive/Products/Applications"
+            > "$RUNNER_TEMP/build.log" 2>&1 || true
+          grep -nE "error:|fatal|Stack dump|nonzero exit|BUILD|ARCHIVE|requires Xcode|Swift Compiler" "$RUNNER_TEMP/build.log" | head -150 || true
+          if [ ! -d "$RUNNER_TEMP/app.xcarchive/Products/Applications" ]; then
+            echo "===== last 150 lines of build log ====="
+            tail -150 "$RUNNER_TEMP/build.log"
+            exit 1
+          fi
 
       - name: Package IPA
         run: |
