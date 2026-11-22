@@ -23,6 +23,7 @@ struct TVSettingsView: View {
     @State private var showOpenSourceAcknowledgements = false
     /// The separate Emby / Jellyfin / Plex section (MediaServers/).
     @State private var showsMediaServers = false
+    @State private var showsAIKeys = false
     @State private var selectedCategory: TVSettingsCategory = .general
     @State private var activePicker: TVSettingsPickerRequest?
     @State private var pendingPickerFocus: TVSettingsDetailFocus?
@@ -537,7 +538,7 @@ struct TVSettingsView: View {
                 HStack(spacing: 16) {
                     Image(systemName: "server.rack")
                         .font(.system(size: 22, weight: .medium))
-                    Text("Emby, Jellyfin & Plex")
+                    Text("Emby · Plex · IPTV")
                         .font(.system(size: 26))
                     Spacer(minLength: 0)
                     Image(systemName: "chevron.forward")
@@ -548,6 +549,23 @@ struct TVSettingsView: View {
             .buttonStyle(TVSettingsPaneRowStyle())
             .fullScreenCover(isPresented: $showsMediaServers) {
                 MediaServersHubView()
+            }
+
+            Button { showsAIKeys = true } label: {
+                HStack(spacing: 16) {
+                    Image(systemName: "translate")
+                        .font(.system(size: 22, weight: .medium))
+                    Text("مفاتيح الذكاء الاصطناعي (OpenAI · Claude · DeepSeek)")
+                        .font(.system(size: 26))
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.forward")
+                        .font(.system(size: 18, weight: .semibold))
+                        .opacity(0.55)
+                }
+            }
+            .buttonStyle(TVSettingsPaneRowStyle())
+            .fullScreenCover(isPresented: $showsAIKeys) {
+                MSAISettingsView()
             }
 
             TVSettingsSectionHeader(.settingsAboutHeaderTv)

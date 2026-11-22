@@ -7,6 +7,8 @@ import Foundation
 enum MediaServerKind: String, Codable, CaseIterable, Identifiable, Hashable {
     case emby
     case plex
+    /// An IPTV subscription that speaks the Xtream Codes API.
+    case iptv
 
     var id: String { rawValue }
 
@@ -14,6 +16,7 @@ enum MediaServerKind: String, Codable, CaseIterable, Identifiable, Hashable {
         switch self {
         case .emby: "Emby"
         case .plex: "Plex"
+        case .iptv: "IPTV"
         }
     }
 
@@ -21,6 +24,7 @@ enum MediaServerKind: String, Codable, CaseIterable, Identifiable, Hashable {
         switch self {
         case .emby: "server.rack"
         case .plex: "play.rectangle.on.rectangle"
+        case .iptv: "tv"
         }
     }
 }
@@ -124,6 +128,69 @@ struct MSItem: Identifiable, Hashable {
     }
 }
 
+/// Facts about one playable file, shown on a source card.
+struct MSMediaInfo: Hashable {
+    /// "2160p", "1080p".
+    var resolution: String?
+    var videoCodec: String?
+    var audioCodec: String?
+    /// "DV", "HDR10", "HLG", or "SDR".
+    var dynamicRange: String?
+    var container: String?
+    /// Bits per second.
+    var bitrate: Int?
+    var size: Int64?
+    var duration: Double?
+    var addedAt: Date?
+    var audioLanguages: [String] = []
+    var subtitleLanguages: [String] = []
+
+    /// Pixel height → "2160p" style label.
+    static func resolution(height: Int?) -> String? {
+        guard let height, height > 0 else { return nil }
+        switch height {
+        case 1800...: return "2160p"
+        case 1000...: return "1080p"
+        case 650...: return "720p"
+        default: return "\(height)p"
+        }
+    }
+}
+
+/// A text subtitle the server can hand over as a file (SRT or VTT), used
+/// for sidecar tracks and as the source of AI translation.
+struct MSSubtitleRef: Hashable, Identifiable {
+    var id: String { url.absoluteString }
+    var title: String
+    var language: String?
+    var url: URL
+    /// The track is also inside the video file, so the engine shows it on
+    /// its own; the URL is only for translation.
+    var isEmbedded: Bool
+}
+
+/// The original file of one item, for Silo's player engine.
+struct MSDirectStream {
+    var url: URL
+    var subtitles: [MSSubtitleRef] = []
+    var info: MSMediaInfo?
+}
+
+/// What to look for on another server: a movie, or one episode of a series.
+struct MSMatchQuery: Hashable {
+    enum Kind: Hashable { case movie, episode }
+    var kind: Kind
+    var title: String
+    var year: Int?
+    var tmdbId: String?
+    var imdbId: String?
+    var seriesTitle: String?
+    var seriesYear: Int?
+    var seriesTmdbId: String?
+    var seasonNumber: Int?
+    var episodeNumber: Int?
+}
+
 struct MSPage {
     var items: [MSItem]
     var total: Int
@@ -198,6 +265,43 @@ enum MSFormat {
         guard let duration = item.duration, item.resumePosition > 0 else { return nil }
         let left = max(duration - item.resumePosition, 0)
         return "\(runtime(left)) left"
+    }
+
+    /// "2026-11-18T10:22:31.0000000Z" and the like; fractions of any length.
+    static func parseISODate(_ text: String) -> Date? {
+        let trimmed = text.replacingOccurrences(of: #"\.\d+"#, with: "", options: .regularExpression)
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        if let date = formatter.date(from: trimmed) { return date }
+        formatter.formatOptions = [.withFullDate]
+        return formatter.date(from: String(trimmed.prefix(10)))
+    }
+
+    /// "1:44:57" or "44:57".
+    static func clock(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "--:--" }
+        let total = Int(seconds)
+        let h = total / 3600, m = (total / 60) % 60, s = total % 60
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
+    }
+
+    /// "19.8 Mbps" or "850 Kbps".
+    static func bitrate(_ bitsPerSecond: Int) -> String {
+        if bitsPerSecond >= 1_000_000 {
+            return String(format: "%.1f Mbps", Double(bitsPerSecond) / 1_000_000)
+        }
+        return "\(max(bitsPerSecond / 1000, 1)) Kbps"
+    }
+
+    static func size(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    /// "11 hours ago", in the app's language.
+    static func relative(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter.localizedString(for: date, relativeTo: Date())
     }
 }
 

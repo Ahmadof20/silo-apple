@@ -451,7 +451,13 @@ struct TVTopMenuBar: View {
     /// Brand logo (mark + wordmark asset), sized to the bar row so it sits
     /// on the same centre line as the tab capsules and trailing icons.
     private var wordmark: some View {
-        SiloWordmarkView(width: SiloTheme.Skyline.wordmarkWidth)
+        // This build is named AH.
+        Text(verbatim: "AH")
+            .font(.system(size: 46, weight: .black, design: .rounded))
+            .tracking(3)
+            .foregroundStyle(.white)
+            .frame(width: SiloTheme.Skyline.wordmarkWidth, alignment: .leading)
+            .accessibilityLabel(Text(verbatim: "AH"))
             .frame(height: SiloTheme.Skyline.barHeight)
             .accessibilityHidden(true)
     }

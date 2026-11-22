@@ -119,11 +119,26 @@ struct EmbyClient: MediaServerClient {
             let Container: String?
             let MediaStreams: [MediaStream]?
             let RunTimeTicks: Int64?
+            let Size: Int64?
+            let Bitrate: Int?
         }
         struct MediaStream: Decodable {
             let kind: String?
             let Codec: String?
-            enum CodingKeys: String, CodingKey { case kind = "Type", Codec }
+            let Index: Int?
+            let Height: Int?
+            let Language: String?
+            let DisplayTitle: String?
+            let Title: String?
+            let IsExternal: Bool?
+            let IsTextSubtitleStream: Bool?
+            let VideoRange: String?
+            let VideoRangeType: String?
+            let DvProfile: Int?
+            enum CodingKeys: String, CodingKey {
+                case kind = "Type", Codec, Index, Height, Language, DisplayTitle, Title, IsExternal
+                case IsTextSubtitleStream, VideoRange, VideoRangeType, DvProfile
+            }
         }
         let Id: String
         let Name: String?
@@ -151,12 +166,13 @@ struct EmbyClient: MediaServerClient {
         let CommunityRating: Double?
         let MediaSources: [MediaSource]?
         let ProviderIds: [String: String]?
+        let DateCreated: String?
 
         enum CodingKeys: String, CodingKey {
             case Id, Name, kind = "Type", CollectionType, IsFolder, Overview, ProductionYear, RunTimeTicks
             case UserData, ImageTags, BackdropImageTags, ParentBackdropItemId, ParentBackdropImageTags
             case ParentThumbItemId, ParentThumbImageTag, SeriesId, SeriesName, SeriesPrimaryImageTag
-            case SeasonId, ParentIndexNumber, IndexNumber, Genres, OfficialRating, CommunityRating, MediaSources, ProviderIds
+            case SeasonId, ParentIndexNumber, IndexNumber, Genres, OfficialRating, CommunityRating, MediaSources, ProviderIds, DateCreated
         }
     }
 
@@ -420,6 +436,110 @@ struct EmbyClient: MediaServerClient {
         } catch MediaServerError.http(let code) where code == 404 || code == 405 {
             // Jellyfin 10.9 and later.
             try await post("/UserItems/\(item.id)/UserData", ["userId": userId], body: body)
+        }
+    }
+
+    // MARK: - Silo engine sources
+
+    private func fullDetail(_ id: String) async throws -> DTO {
+        try await get("/Users/\(userId)/Items/\(id)", [
+            "Fields": Self.listFields + ",MediaSources,DateCreated",
+        ], as: DTO.self)
+    }
+
+    func mediaInfo(for item: MSItem) async throws -> MSMediaInfo? {
+        let dto = try await fullDetail(item.id)
+        guard let source = dto.MediaSources?.first else { return nil }
+        return Self.info(source, dto: dto)
+    }
+
+    static func info(_ source: DTO.MediaSource, dto: DTO) -> MSMediaInfo {
+        let streams = source.MediaStreams ?? []
+        let video = streams.first { $0.kind == "Video" }
+        let audio = streams.first { $0.kind == "Audio" }
+        var range = "SDR"
+        let rangeType = (video?.VideoRangeType ?? "").lowercased()
+        if video?.DvProfile != nil || rangeType.contains("dovi") {
+            range = "DV"
+        } else if rangeType.contains("hlg") {
+            range = "HLG"
+        } else if rangeType.contains("hdr") || (video?.VideoRange ?? "").lowercased() == "hdr" {
+            range = "HDR10"
+        }
+        let ticks = source.RunTimeTicks ?? dto.RunTimeTicks
+        return MSMediaInfo(
+            resolution: MSMediaInfo.resolution(height: video?.Height),
+            videoCodec: video?.Codec,
+            audioCodec: audio?.Codec,
+            dynamicRange: range,
+            container: source.Container,
+            bitrate: source.Bitrate,
+            size: source.Size,
+            duration: ticks.map { Double($0) / ticksPerSecond },
+            addedAt: dto.DateCreated.flatMap(MSFormat.parseISODate),
+            audioLanguages: streams.filter { $0.kind == "Audio" }.compactMap(\.Language),
+            subtitleLanguages: streams.filter { $0.kind == "Subtitle" }.compactMap(\.Language)
+        )
+    }
+
+    func directStream(for item: MSItem) async throws -> MSDirectStream {
+        let dto = try await fullDetail(item.id)
+        guard let source = dto.MediaSources?.first else { throw MediaServerError.notPlayable }
+        let sourceId = source.Id ?? item.id
+        let container = (source.Container ?? "mkv").split(separator: ",").first.map(String.init) ?? "mkv"
+        let url = try MSHTTP.url(base, "/Videos/\(item.id)/stream.\(container)", [
+            "Static": "true",
+            "MediaSourceId": sourceId,
+            "DeviceId": MediaServerDevice.id,
+            "api_key": token,
+        ])
+        var subtitles: [MSSubtitleRef] = []
+        for stream in source.MediaStreams ?? [] where stream.kind == "Subtitle" {
+            guard stream.IsTextSubtitleStream ?? false, let index = stream.Index,
+                  let subURL = try? MSHTTP.url(base, "/Videos/\(item.id)/\(sourceId)/Subtitles/\(index)/Stream.srt",
+                                              ["api_key": token]) else { continue }
+            subtitles.append(MSSubtitleRef(
+                title: stream.DisplayTitle ?? stream.Title ?? stream.Language ?? "Subtitle \(index)",
+                language: stream.Language,
+                url: subURL,
+                isEmbedded: !(stream.IsExternal ?? false)
+            ))
+        }
+        return MSDirectStream(url: url, subtitles: subtitles, info: Self.info(source, dto: dto))
+    }
+
+    /// Emby looks titles up by provider id directly; Jellyfin ignores the
+    /// filter, so every answer is checked against the id before use.
+    func findMatch(_ query: MSMatchQuery) async throws -> MSItem? {
+        let isEpisode = query.kind == .episode
+        let tmdb = isEpisode ? query.seriesTmdbId : query.tmdbId
+        if let tmdb {
+            let result = try? await get("/Users/\(userId)/Items", [
+                "Recursive": "true",
+                "IncludeItemTypes": isEpisode ? "Series" : "Movie",
+                "AnyProviderIdEquals": "tmdb.\(tmdb)",
+                "Limit": "5",
+                "Fields": Self.listFields,
+            ], as: ItemsResult.self)
+            if let hit = result?.Items.map(toItem).first(where: { $0.tmdbId == tmdb }) {
+                if !isEpisode { return hit }
+                if let season = query.seasonNumber, let episode = query.episodeNumber {
+                    return try await self.episode(in: hit, season: season, episode: episode)
+                }
+            }
+        }
+        switch query.kind {
+        case .movie:
+            let found = try await search(query.title)
+            return MSMatcher.best(found.filter { $0.kind == .movie }, title: query.title, year: query.year,
+                                  tmdbId: query.tmdbId, imdbId: query.imdbId)
+        case .episode:
+            guard let seriesTitle = query.seriesTitle, let season = query.seasonNumber,
+                  let episode = query.episodeNumber else { return nil }
+            let found = try await search(seriesTitle)
+            guard let series = MSMatcher.best(found.filter { $0.kind == .series }, title: seriesTitle,
+                                              year: query.seriesYear, tmdbId: query.seriesTmdbId, imdbId: nil) else { return nil }
+            return try await self.episode(in: series, season: season, episode: episode)
         }
     }
 

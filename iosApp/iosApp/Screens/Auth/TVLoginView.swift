@@ -33,6 +33,8 @@ struct TVLoginView: View {
     @State private var showPasswordForm: Bool = false
     @State private var isSubmittingPassword = false
     @State private var isSubmittingNetwork = false
+    /// Emby, Jellyfin, Plex, and IPTV sign-in, offered on this same page.
+    @State private var showsOtherServers = false
     /// Counts failed password attempts so the fields shake on each one.
     @State private var passwordFailures = 0
     /// Set by `goToProfiles()`, the one place this screen moves on after a
@@ -55,6 +57,7 @@ struct TVLoginView: View {
         case togglePassword
         case signIn
         case backToPhone
+        case otherServers
     }
 
     /// True while a nearby phone is on the line; its panel replaces the code.
@@ -84,6 +87,7 @@ struct TVLoginView: View {
         .animation(.easeOut(duration: 0.32), value: isPairing)
         .animation(.easeOut(duration: 0.32), value: showsPasswordScreen)
         .animation(.easeOut(duration: 0.32), value: offersOnlyNetworkSignIn)
+        .modifier(MSOtherServersCover(isPresented: $showsOtherServers))
         .task {
             MarqueeScene.shared.focus = .account
             MarqueeScene.shared.personalTint = nil
@@ -229,9 +233,22 @@ struct TVLoginView: View {
             .focused($focusedField, equals: .usePassword)
         }
 
+        otherServersButton
+
         Button(leaveTitle) { leave() }
             .buttonStyle(.marquee(.plain, fullWidth: false))
             .focused($focusedField, equals: .changeServer)
+    }
+
+    /// Adds Emby, Jellyfin, Plex, or IPTV subscriptions beside this server.
+    private var otherServersButton: some View {
+        Button {
+            showsOtherServers = true
+        } label: {
+            Label(MSOtherServersCover.buttonTitle, systemImage: "rectangle.stack.badge.plus")
+        }
+        .buttonStyle(.marquee(.glass, fullWidth: false))
+        .focused($focusedField, equals: .otherServers)
     }
 
     /// Whether "Sign in with a password" is offered: not on a server whose
@@ -416,6 +433,9 @@ struct TVLoginView: View {
                     // A phone approval must not race a sign-in in flight.
                     .disabled(isSubmittingPassword || isSubmittingNetwork)
                 }
+
+                otherServersButton
+                    .disabled(isSubmittingPassword)
 
                 Button(leaveTitle) { leave() }
                     .buttonStyle(.marquee(.plain, fullWidth: false))

@@ -288,6 +288,7 @@ struct TVSeriesDetailView: View {
 
                         VStack(alignment: .leading, spacing: TVDetailLayout.bodySectionSpacing) {
                             episodeExperience
+                            sourcesSection
                             if let cast = detail.cast, !cast.isEmpty {
                                 castSection(cast: cast)
                             }
@@ -1170,6 +1171,16 @@ struct TVSeriesDetailView: View {
             pageScrollCoordinator.revealSupporting(reduceMotion: reduceMotion)
         } else {
             pageScrollCoordinator.releasePrimary()
+        }
+    }
+
+    /// The next episode's sources: Silo's file plus Emby, Plex, and IPTV.
+    @ViewBuilder
+    private var sourcesSection: some View {
+        if let episode = nextUpPlaybackDetail ?? nextUpCatalogDetail {
+            TVSourcesSection(detail: episode, onPlaySilo: {
+                onPlayEpisode(episode.contentId, nil, false)
+            })
         }
     }
 

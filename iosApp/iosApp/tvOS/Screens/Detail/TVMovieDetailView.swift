@@ -110,6 +110,7 @@ struct TVMovieDetailView: View {
                         .id(heroScrollId)
 
                         VStack(alignment: .leading, spacing: TVDetailLayout.bodySectionSpacing) {
+                            sourcesSection
                             if let cast = detail.cast, !cast.isEmpty {
                                 castSection(cast: cast)
                             }
@@ -312,6 +313,11 @@ struct TVMovieDetailView: View {
     private var primaryPlayLabel: String {
         guard let pos = resumePositionSeconds else { return AppLanguage.string(.commonPlay, locale: locale) }
         return AppLanguage.string(.detailResumeAt(PlayerTimeFormatter.formatHMS(pos)), locale: locale)
+    }
+
+    /// Silo's file plus the same movie on Emby, Plex, and IPTV.
+    private var sourcesSection: some View {
+        TVSourcesSection(detail: detail, onPlaySilo: { onPlay(false) })
     }
 
     private var similarSection: some View {

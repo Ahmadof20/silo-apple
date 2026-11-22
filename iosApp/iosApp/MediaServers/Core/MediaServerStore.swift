@@ -115,6 +115,7 @@ final class MediaServerStore {
         switch account.kind {
         case .emby: return EmbyClient(account: account, token: token)
         case .plex: return PlexClient(account: account, token: token)
+        case .iptv: return IPTVClient(account: account, password: token)
         }
     }
 

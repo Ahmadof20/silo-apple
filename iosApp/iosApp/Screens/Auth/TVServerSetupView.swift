@@ -181,7 +181,7 @@ struct TVServerSetupView: View {
                     guard !viewModel.isLoading else { return }
                     showsMediaServers = true
                 } label: {
-                    Label("Emby, Jellyfin & Plex", systemImage: "server.rack")
+                    Label(MSOtherServersCover.buttonTitle, systemImage: "rectangle.stack.badge.plus")
                 }
                 .buttonStyle(.marquee(.glass, fullWidth: false))
                 .focused($focusedField, equals: .mediaServers)

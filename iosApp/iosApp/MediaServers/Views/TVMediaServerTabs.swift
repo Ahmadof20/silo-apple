@@ -203,11 +203,11 @@ private struct MSTVServerDetailCover: View {
 
     var body: some View {
         NavigationStack {
-            MSItemDetailView(client: client, item: item)
+            TVMSDetailView(client: client, item: item)
                 .navigationDestination(for: MSRoute.self) { route in
                     switch route {
                     case .item(_, let child):
-                        MSItemDetailView(client: client, item: child)
+                        TVMSDetailView(client: client, item: child)
                     case .library(_, let library):
                         MSLibraryView(client: client, library: library)
                     default:

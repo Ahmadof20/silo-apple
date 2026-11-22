@@ -8,6 +8,7 @@ enum MSRoute: Hashable {
     case search(MediaServerAccount)
     case addEmby
     case addPlex
+    case addIPTV
 }
 
 /// What the player cover is showing.
@@ -16,6 +17,20 @@ struct MSPlayRequest: Identifiable {
     let account: MediaServerAccount
     let item: MSItem
     let resume: Bool
+}
+
+/// Presents the server hub full screen; used by both sign-in pages so
+/// Emby, Plex, and IPTV are added from the same place as the Silo server.
+struct MSOtherServersCover: ViewModifier {
+    @Binding var isPresented: Bool
+
+    static let buttonTitle = "اشتراكات أخرى: Emby · Plex · IPTV"
+
+    func body(content: Content) -> some View {
+        content.fullScreenCover(isPresented: $isPresented) {
+            MediaServersHubView()
+        }
+    }
 }
 
 /// Entry to the Emby & Plex section: saved accounts and the two add buttons.
@@ -54,13 +69,21 @@ struct MediaServersHubView: View {
                     NavigationLink(value: MSRoute.addPlex) {
                         Label("Add Plex server", systemImage: MediaServerKind.plex.systemImage)
                     }
+                    NavigationLink(value: MSRoute.addIPTV) {
+                        Label("Add IPTV subscription (Xtream)", systemImage: MediaServerKind.iptv.systemImage)
+                    }
+                    NavigationLink {
+                        MSAISettingsView()
+                    } label: {
+                        Label("AI translation keys (OpenAI · Claude · DeepSeek)", systemImage: "translate")
+                    }
                 } header: {
                     Text("Add a server")
                 } footer: {
                     Text("Emby and Jellyfin sign in with a server address and your username. Plex signs in with your plex.tv account.")
                 }
             }
-            .navigationTitle("Emby & Plex")
+            .navigationTitle("Emby · Plex · IPTV")
             .toolbar {
                 #if os(iOS)
                 ToolbarItem(placement: .cancellationAction) {
@@ -108,6 +131,10 @@ struct MediaServersHubView: View {
             MSAddPlexView { account in
                 path = [.account(account)]
             }
+        case .addIPTV:
+            MSAddIPTVView { account in
+                path = [.account(account)]
+            }
         case .account(let account):
             if let client = store.client(for: account) {
                 MSAccountHomeView(client: client)
@@ -120,7 +147,11 @@ struct MediaServersHubView: View {
             }
         case .item(let account, let item):
             if let client = store.client(for: account) {
+                #if os(tvOS)
+                TVMSDetailView(client: client, item: item)
+                #else
                 MSItemDetailView(client: client, item: item)
+                #endif
             }
         case .search(let account):
             if let client = store.client(for: account) {

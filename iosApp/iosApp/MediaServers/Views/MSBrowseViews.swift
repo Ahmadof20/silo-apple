@@ -39,7 +39,11 @@ struct MSAccountHomeView: View {
         .task { await load() }
         .refreshable { await load() }
         .fullScreenCover(item: $playRequest, onDismiss: { Task { await load() } }) { request in
+            #if os(tvOS)
+            TVExternalPlayerView(client: client, item: request.item, resume: request.resume)
+            #else
             MSPlayerView(client: client, item: request.item, resume: request.resume)
+            #endif
         }
     }
 

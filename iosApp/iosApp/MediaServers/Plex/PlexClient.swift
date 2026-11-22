@@ -203,13 +203,33 @@ struct PlexClient: MediaServerClient {
     struct Metadata: Decodable {
         struct Tag: Decodable { let tag: String? }
         struct Media: Decodable {
-            struct Part: Decodable { let key: String?; let container: String? }
+            struct Stream: Decodable {
+                let streamType: Int?
+                let codec: String?
+                let languageCode: String?
+                let language: String?
+                let displayTitle: String?
+                let key: String?
+                let DOVIPresent: Bool?
+                let colorTrc: String?
+            }
+            struct Part: Decodable {
+                let key: String?
+                let container: String?
+                let size: Int64?
+                let streams: [Stream]?
+                enum CodingKeys: String, CodingKey { case key, container, size, streams = "Stream" }
+            }
             let container: String?
             let videoCodec: String?
             let audioCodec: String?
             let duration: Int?
+            let bitrate: Int?
+            let height: Int?
             let parts: [Part]?
-            enum CodingKeys: String, CodingKey { case container, videoCodec, audioCodec, duration, parts = "Part" }
+            enum CodingKeys: String, CodingKey {
+                case container, videoCodec, audioCodec, duration, bitrate, height, parts = "Part"
+            }
         }
         let ratingKey: String
         let type: String?
@@ -237,13 +257,14 @@ struct PlexClient: MediaServerClient {
         let genres: [Tag]?
         let media: [Media]?
         let guids: [Tag2]?
+        let addedAt: Int?
         struct Tag2: Decodable { let id: String? }
 
         enum CodingKeys: String, CodingKey {
             case ratingKey, type, title, summary, year, duration, viewOffset, viewCount, leafCount, viewedLeafCount
             case thumb, art, parentThumb, grandparentThumb, grandparentArt, grandparentTitle, grandparentRatingKey
             case parentRatingKey, parentIndex, index, contentRating, audienceRating, rating
-            case genres = "Genre", media = "Media", guids = "Guid"
+            case genres = "Genre", media = "Media", guids = "Guid", addedAt
         }
     }
 
@@ -411,7 +432,8 @@ struct PlexClient: MediaServerClient {
             let hubs: [Hub]?
             enum CodingKeys: String, CodingKey { case hubs = "Hub" }
         }
-        let hubs = try await get("/hubs/search", ["query": query, "limit": "30"], as: Container<Hubs>.self).MediaContainer
+        let hubs = try await get("/hubs/search", ["query": query, "limit": "30", "includeGuids": "1"],
+                                 as: Container<Hubs>.self).MediaContainer
         return (hubs.hubs ?? [])
             .filter { ["movie", "show", "episode"].contains($0.type ?? "") }
             .flatMap { $0.metadata ?? [] }
@@ -495,6 +517,67 @@ struct PlexClient: MediaServerClient {
             "identifier": "com.plexapp.plugins.library",
             "key": item.id,
         ])
+    }
+
+    // MARK: - Silo engine sources
+
+    private func fileMetadata(_ id: String) async throws -> Metadata {
+        guard let meta = try await list("/library/metadata/\(id)").metadata?.first else {
+            throw MediaServerError.notPlayable
+        }
+        return meta
+    }
+
+    private static func info(_ meta: Metadata) -> MSMediaInfo? {
+        guard let media = meta.media?.first else { return nil }
+        let part = media.parts?.first
+        let streams = part?.streams ?? []
+        let video = streams.first { $0.streamType == 1 }
+        var range = "SDR"
+        if video?.DOVIPresent == true {
+            range = "DV"
+        } else if let trc = video?.colorTrc?.lowercased() {
+            if trc.contains("2084") { range = "HDR10" } else if trc.contains("hlg") || trc.contains("b67") { range = "HLG" }
+        }
+        let durationMs = media.duration ?? meta.duration
+        return MSMediaInfo(
+            resolution: MSMediaInfo.resolution(height: media.height),
+            videoCodec: media.videoCodec,
+            audioCodec: media.audioCodec,
+            dynamicRange: range,
+            container: part?.container ?? media.container,
+            bitrate: media.bitrate.map { $0 * 1000 },
+            size: part?.size,
+            duration: durationMs.map { Double($0) / 1000 },
+            addedAt: meta.addedAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+            audioLanguages: streams.filter { $0.streamType == 2 }.compactMap { $0.languageCode ?? $0.language },
+            subtitleLanguages: streams.filter { $0.streamType == 3 }.compactMap { $0.languageCode ?? $0.language }
+        )
+    }
+
+    func mediaInfo(for item: MSItem) async throws -> MSMediaInfo? {
+        Self.info(try await fileMetadata(item.id))
+    }
+
+    func directStream(for item: MSItem) async throws -> MSDirectStream {
+        let meta = try await fileMetadata(item.id)
+        guard let part = meta.media?.first?.parts?.first, let partKey = part.key else {
+            throw MediaServerError.notPlayable
+        }
+        let url = try MSHTTP.url(base, partKey, ["X-Plex-Token": token])
+        // Plex serves sidecar subtitle files by key; embedded tracks are read
+        // from the file by the engine itself.
+        let subtitles: [MSSubtitleRef] = (part.streams ?? []).compactMap { stream in
+            guard stream.streamType == 3, let key = stream.key,
+                  let subURL = try? MSHTTP.url(base, key, ["X-Plex-Token": token]) else { return nil }
+            return MSSubtitleRef(
+                title: stream.displayTitle ?? stream.language ?? "Subtitle",
+                language: stream.languageCode,
+                url: subURL,
+                isEmbedded: false
+            )
+        }
+        return MSDirectStream(url: url, subtitles: subtitles, info: Self.info(meta))
     }
 
     func saveResume(_ item: MSItem, position: Double) async throws {

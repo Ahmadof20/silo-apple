@@ -65,7 +65,11 @@ struct MSItemDetailView: View {
         #endif
         .task { await load() }
         .fullScreenCover(item: $playRequest, onDismiss: { Task { await load() } }) { request in
+            #if os(tvOS)
+            TVExternalPlayerView(client: client, item: request.item, resume: request.resume)
+            #else
             MSPlayerView(client: client, item: request.item, resume: request.resume)
+            #endif
         }
     }
 

@@ -1,6 +1,96 @@
 #if !os(macOS)
 import SwiftUI
 
+// MARK: - IPTV (Xtream Codes)
+
+struct MSAddIPTVView: View {
+    let onAdded: (MediaServerAccount) -> Void
+
+    @State private var address = ""
+    @State private var username = ""
+    @State private var password = ""
+    @State private var isConnecting = false
+    @State private var error: String?
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("Server address", text: $address, prompt: Text("http://provider.example:8080"))
+                    .textContentType(.URL)
+                    .autocorrectionDisabled()
+                    #if os(iOS)
+                    .keyboardType(.URL)
+                    .textInputAutocapitalization(.never)
+                    #endif
+                    .onChange(of: address) { _, value in fillFromLink(value) }
+            } header: {
+                Text("Server")
+            } footer: {
+                Text("Paste the whole M3U link from your provider (get.php?username=…&password=…) and the fields fill in.")
+            }
+
+            Section("Account") {
+                TextField("Username", text: $username)
+                    .autocorrectionDisabled()
+                    #if os(iOS)
+                    .textInputAutocapitalization(.never)
+                    #endif
+                SecureField("Password", text: $password)
+            }
+
+            if let error {
+                Section {
+                    Text(error).foregroundStyle(.red)
+                }
+            }
+
+            Section {
+                Button {
+                    connect()
+                } label: {
+                    HStack {
+                        Text(isConnecting ? "Connecting…" : "Sign In")
+                        if isConnecting {
+                            Spacer()
+                            ProgressView()
+                        }
+                    }
+                }
+                .disabled(isConnecting || address.isEmpty || username.isEmpty || password.isEmpty)
+            }
+        }
+        .navigationTitle("IPTV")
+    }
+
+    /// An M3U or player_api link carries the username and password.
+    private func fillFromLink(_ value: String) {
+        guard value.contains("username="), let components = URLComponents(string: value) else { return }
+        let items = components.queryItems ?? []
+        if let user = items.first(where: { $0.name == "username" })?.value, !user.isEmpty { username = user }
+        if let pass = items.first(where: { $0.name == "password" })?.value, !pass.isEmpty { password = pass }
+        var root = components
+        root.path = ""
+        root.query = nil
+        if let base = root.url?.absoluteString, base != value { address = base }
+    }
+
+    private func connect() {
+        isConnecting = true
+        error = nil
+        Task {
+            do {
+                let (account, token) = try await IPTVClient.signIn(address: address, username: username, password: password)
+                MediaServerStore.shared.add(account, token: token)
+                isConnecting = false
+                onAdded(account)
+            } catch {
+                self.error = error.msMessage
+                isConnecting = false
+            }
+        }
+    }
+}
+
 // MARK: - Emby / Jellyfin
 
 struct MSAddEmbyView: View {
