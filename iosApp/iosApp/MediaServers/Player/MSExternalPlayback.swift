@@ -99,7 +99,10 @@ final class MSExternalPlayback {
             hdr: info?.dynamicRange.map { $0 != "SDR" },
             container: info?.container,
             fileSize: info?.size,
-            duration: duration,
+            // The engine reads the real length from the file. A server's
+            // runtime is often rounded (IPTV), and a length longer than the
+            // file made its end look like a dropped connection.
+            duration: nil,
             bitrate: info?.bitrate.flatMap { MSSafe.int(Double($0) / 1_000) },
             videoTracks: nil,
             audioTracks: nil,
@@ -162,7 +165,7 @@ final class MSExternalPlayback {
             isPaused: false,
             streamUrl: stream.url.absoluteString,
             audioTrackIndex: nil,
-            durationSeconds: duration,
+            durationSeconds: nil,
             timelineOffsetSeconds: 0,
             subtitleUrls: subtitleURLs.isEmpty ? nil : subtitleURLs,
             playbackInfo: nil
