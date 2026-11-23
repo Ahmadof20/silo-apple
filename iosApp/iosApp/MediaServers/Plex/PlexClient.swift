@@ -498,12 +498,12 @@ struct PlexClient: MediaServerClient {
         case .stopped: plexState = "stopped"
         default: plexState = isPaused ? "paused" : "playing"
         }
-        let durationMs = source.duration.map { String(Int($0 * 1000)) }
+        let durationMs = source.duration.flatMap { MSSafe.int($0 * 1000) }.map(String.init)
         try? await call("/:/timeline", [
             "ratingKey": item.id,
             "key": "/library/metadata/\(item.id)",
             "state": plexState,
-            "time": String(Int(max(position, 0) * 1000)),
+            "time": String(MSSafe.int(max(position, 0) * 1000) ?? 0),
             "duration": durationMs,
             "X-Plex-Session-Identifier": source.playSessionId,
         ])
@@ -546,7 +546,7 @@ struct PlexClient: MediaServerClient {
             audioCodec: media.audioCodec,
             dynamicRange: range,
             container: part?.container ?? media.container,
-            bitrate: media.bitrate.map { $0 * 1000 },
+            bitrate: media.bitrate.flatMap { MSSafe.multiply($0, 1000) },
             size: part?.size,
             duration: durationMs.map { Double($0) / 1000 },
             addedAt: meta.addedAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
@@ -584,7 +584,7 @@ struct PlexClient: MediaServerClient {
         try await call("/:/progress", [
             "identifier": "com.plexapp.plugins.library",
             "key": item.id,
-            "time": String(Int(max(0, position) * 1000)),
+            "time": String(MSSafe.int(max(0, position) * 1000) ?? 0),
             "state": "stopped",
         ])
     }

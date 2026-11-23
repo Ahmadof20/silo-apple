@@ -404,7 +404,7 @@ struct EmbyClient: MediaServerClient {
             "ItemId": item.id,
             "MediaSourceId": source.mediaSourceId ?? item.id,
             "PlaySessionId": source.playSessionId,
-            "PositionTicks": Int64(max(position, 0) * Self.ticksPerSecond),
+            "PositionTicks": MSSafe.int64(position * Self.ticksPerSecond),
             "IsPaused": isPaused,
             "CanSeek": true,
             "PlayMethod": source.isTranscoding ? "Transcode" : "DirectPlay",
@@ -429,7 +429,7 @@ struct EmbyClient: MediaServerClient {
     }
 
     func saveResume(_ item: MSItem, position: Double) async throws {
-        let body: [String: Any] = ["PlaybackPositionTicks": Int64(max(0, position) * Self.ticksPerSecond)]
+        let body: [String: Any] = ["PlaybackPositionTicks": MSSafe.int64(position * Self.ticksPerSecond)]
         do {
             // Emby and Jellyfin up to 10.8.
             try await post("/Users/\(userId)/Items/\(item.id)/UserData", body: body)

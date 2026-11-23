@@ -72,14 +72,16 @@ struct IPTVClient: MediaServerClient {
                 string = nil
             }
         }
-        var int: Int? { string.flatMap { Int($0) ?? Double($0).map { Int($0) } } }
-        var double: Double? { string.flatMap(Double.init) }
+        var int: Int? { string.flatMap { Int($0) ?? Double($0).flatMap(MSSafe.int) } }
+        var double: Double? { string.flatMap(Double.init).flatMap { $0.isFinite ? $0 : nil } }
         var nonEmpty: String? { string.flatMap { $0.isEmpty || $0 == "0" ? nil : $0 } }
     }
 
     struct Movie: Codable, Hashable {
         let id: String
         let name: String
+        /// `MSMatcher.normalize(name)`, worked out once when the list loads.
+        let key: String
         let icon: String?
         let ext: String?
         let added: Int?
@@ -91,6 +93,7 @@ struct IPTVClient: MediaServerClient {
     struct Series: Codable, Hashable {
         let id: String
         let name: String
+        let key: String
         let cover: String?
         let plot: String?
         let year: Int?
@@ -251,6 +254,7 @@ struct IPTVClient: MediaServerClient {
             return Movie(
                 id: id,
                 name: name,
+                key: MSMatcher.normalize(name),
                 icon: wire.stream_icon.flatMap { $0.isEmpty ? nil : $0 },
                 ext: wire.container_extension,
                 added: wire.added?.int,
@@ -269,6 +273,7 @@ struct IPTVClient: MediaServerClient {
             return Series(
                 id: id,
                 name: name,
+                key: MSMatcher.normalize(name),
                 cover: wire.cover.flatMap { $0.isEmpty ? nil : $0 },
                 plot: wire.plot,
                 year: wire.year?.int ?? date.flatMap { Int($0.prefix(4)) } ?? MSMatcher.yearIn(name),
@@ -371,7 +376,7 @@ struct IPTVClient: MediaServerClient {
             kind: .episode,
             title: episode.title.map(Self.displayTitle) ?? "Episode \(episode.episode_num?.int ?? 0)",
             overview: episode.info?.plot,
-            duration: episode.info?.duration_secs?.double,
+            duration: MSSafe.duration(episode.info?.duration_secs?.double),
             resumePosition: state.position,
             isWatched: state.watched,
             posterURL: info.info?.cover.flatMap(URL.init(string:)),
@@ -442,7 +447,7 @@ struct IPTVClient: MediaServerClient {
             if let vod = try? MSHTTP.decode(VodInfo.self, from: try await api("get_vod_info", ["vod_id": streamId])),
                let info = vod.info {
                 item.overview = info.plot ?? info.description
-                item.duration = info.duration_secs?.double
+                item.duration = MSSafe.duration(info.duration_secs?.double)
                 item.backdropURL = info.backdrop_path?.first.flatMap(URL.init(string:))
                 item.genres = (info.genre ?? "").components(separatedBy: CharacterSet(charactersIn: ",/"))
                     .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
@@ -492,8 +497,8 @@ struct IPTVClient: MediaServerClient {
         let wanted = MSMatcher.normalize(query)
         guard !wanted.isEmpty else { return [] }
         let entry = try await catalog()
-        let movies = entry.movies.lazy.filter { MSMatcher.normalize($0.name).contains(wanted) }.prefix(40).map(toItem)
-        let series = entry.series.lazy.filter { MSMatcher.normalize($0.name).contains(wanted) }.prefix(40).map(toItem)
+        let movies = entry.movies.lazy.filter { $0.key.contains(wanted) }.prefix(40).map(toItem)
+        let series = entry.series.lazy.filter { $0.key.contains(wanted) }.prefix(40).map(toItem)
         return Array(movies) + Array(series)
     }
 
@@ -583,8 +588,8 @@ struct IPTVClient: MediaServerClient {
             audioCodec: audio?.codec_name,
             dynamicRange: range,
             container: container,
-            bitrate: bitrateKbps.flatMap { $0 > 0 ? $0 * 1000 : nil },
-            duration: duration,
+            bitrate: bitrateKbps.flatMap { $0 > 0 ? MSSafe.multiply($0, 1000) : nil },
+            duration: MSSafe.duration(duration),
             addedAt: added.map { Date(timeIntervalSince1970: TimeInterval($0)) }
         )
     }
@@ -621,7 +626,7 @@ actor IPTVCatalog {
             }
             let wanted = MSMatcher.normalize(title)
             guard !wanted.isEmpty else { return [] }
-            return movies.filter { MSMatcher.normalize($0.name) == wanted }
+            return movies.filter { $0.key == wanted }
         }
 
         func seriesCandidates(for title: String, tmdb: String?) -> [IPTVClient.Series] {
@@ -631,7 +636,7 @@ actor IPTVCatalog {
             }
             let wanted = MSMatcher.normalize(title)
             guard !wanted.isEmpty else { return [] }
-            return series.filter { MSMatcher.normalize($0.name) == wanted }
+            return series.filter { $0.key == wanted }
         }
     }
 
@@ -649,13 +654,11 @@ actor IPTVCatalog {
         }
         if let running = loads[key] { return try await running.value }
         let task = Task<Entry, Error> {
-            async let movies = client.fetchMovies()
-            async let series = client.fetchSeries()
-            let entry = Entry(
-                movies: try await movies.sorted { ($0.added ?? 0) > ($1.added ?? 0) },
-                series: try await series.sorted { ($0.modified ?? 0) > ($1.modified ?? 0) },
-                loadedAt: Date()
-            )
+            // One list at a time: large panels send tens of megabytes each,
+            // and decoding both at once doubled the memory peak.
+            let movies = try await client.fetchMovies().sorted { ($0.added ?? 0) > ($1.added ?? 0) }
+            let series = try await client.fetchSeries().sorted { ($0.modified ?? 0) > ($1.modified ?? 0) }
+            let entry = Entry(movies: movies, series: series, loadedAt: Date())
             Self.writeDisk(entry, key: key)
             return entry
         }
@@ -687,7 +690,7 @@ actor IPTVCatalog {
     private static func fileURL(_ key: String) -> URL? {
         let safe = key.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? key
         return FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("iptv-\(safe).json")
+            .appendingPathComponent("iptv2-\(safe).json")
     }
 
     private static func readDisk(_ key: String) -> Entry? {

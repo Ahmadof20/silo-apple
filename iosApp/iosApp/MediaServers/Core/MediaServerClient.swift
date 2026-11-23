@@ -87,9 +87,12 @@ enum MSMatcher {
     }
 
     /// A four-digit year written in a title, "Dune (2021)" → 2021.
+    private static let yearPattern = try? NSRegularExpression(pattern: #"[\(\[ ]((19|20)\d{2})[\)\] ]?"#)
+    private static let prefixPattern = try? NSRegularExpression(pattern: #"^\s*[\[\|(]?[A-Z]{2,3}[\]\|)]?\s*[-:|]\s*"#)
+    private static let bracketPattern = try? NSRegularExpression(pattern: #"[\[(][^\])]*[\])]"#)
+
     static func yearIn(_ title: String) -> Int? {
-        let pattern = #"[\(\[ ]((19|20)\d{2})[\)\] ]?"#
-        guard let regex = try? NSRegularExpression(pattern: pattern),
+        guard let regex = yearPattern,
               let match = regex.firstMatch(in: title, range: NSRange(title.startIndex..., in: title)),
               let range = Range(match.range(at: 1), in: title) else { return nil }
         return Int(title[range])
@@ -106,10 +109,10 @@ enum MSMatcher {
     static func normalize(_ title: String) -> String {
         var text = title
         // "EN - ", "AR| ", "|NF| ", "[EN] " at the start.
-        if let regex = try? NSRegularExpression(pattern: #"^\s*[\[\|(]?[A-Z]{2,3}[\]\|)]?\s*[-:|]\s*"#) {
+        if let regex = prefixPattern {
             text = regex.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "")
         }
-        if let regex = try? NSRegularExpression(pattern: #"[\[(][^\])]*[\])]"#) {
+        if let regex = bracketPattern {
             text = regex.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: " ")
         }
         let folded = text.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: nil)

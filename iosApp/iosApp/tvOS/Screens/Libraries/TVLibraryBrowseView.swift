@@ -29,6 +29,9 @@ struct TVLibraryBrowseView: View {
     @State private var sectionsError: ErrorState? = nil
     @State private var scopeIncomplete = false
     @State private var loadGeneration = 0
+    /// Rows from Emby, Plex, and IPTV, after Silo's own rows.
+    @State private var serverSections: [ResolvedSection] = []
+    @State private var serverRequest: MSExternalRequest?
 
     @Environment(AppRouter.self) private var router
     @Environment(\.locale) private var locale
@@ -36,7 +39,28 @@ struct TVLibraryBrowseView: View {
     // MARK: - Derived
 
     private var contentSections: [ResolvedSection] {
-        sections.filter { !$0.isFeatured && $0.hasCards }
+        sections.filter { !$0.isFeatured && $0.hasCards } + serverSections
+    }
+
+    /// Series libraries (and the Series tab of a mixed one) get series rows.
+    private var showsSeries: Bool {
+        mediaScope == .series || (mediaScope == nil && library.isSeriesLibrary)
+    }
+
+    private func openCard(_ destinationContentId: String, _ item: SectionItem) {
+        guard MSExternalRows.isExternal(destinationContentId) else {
+            router.navigate(to: .itemDetail(destinationContentId: destinationContentId, sectionItem: item, libraryId: library.id))
+            return
+        }
+        Task { serverRequest = await MSExternalRequest.open(contentId: destinationContentId, router: router) }
+    }
+
+    private func openRow(_ section: ResolvedSection) {
+        if let tab = MSExternalRows.shared.tab(forSection: section.id) {
+            serverRequest = MSExternalRequest(kind: .library(tab))
+            return
+        }
+        router.navigate(to: .sectionCatalog(SectionCatalogTarget(section, scope: .library(library.id), mediaScope: mediaScope)))
     }
 
     // MARK: - Body
@@ -63,20 +87,8 @@ struct TVLibraryBrowseView: View {
                     focusRequest: focusRequest,
                     isTopMenuFocused: isTopMenuFocused,
                     onTopMenuFocusRequest: onMoveUp,
-                    onItemTap: { destinationContentId, item in
-                        router.navigate(
-                            to: .itemDetail(
-                                destinationContentId: destinationContentId,
-                                sectionItem: item,
-                                libraryId: library.id
-                            )
-                        )
-                    },
-                    onExploreAll: { section in
-                        router.navigate(to: .sectionCatalog(SectionCatalogTarget(
-                            section, scope: .library(library.id), mediaScope: mediaScope
-                        )))
-                    }
+                    onItemTap: openCard,
+                    onExploreAll: openRow
                 )
                 .environment(\.browseMediaScope, mediaScope)
                 .id(library.id)
@@ -91,6 +103,8 @@ struct TVLibraryBrowseView: View {
         .environment(\.browseLibraryId, library.id)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task { await loadContent() }
+        .task(id: showsSeries) { serverSections = await MSExternalRows.shared.sections(shows: showsSeries) }
+        .modifier(MSExternalPresenter(request: $serverRequest))
     }
 
     private var emptyHint: some View {

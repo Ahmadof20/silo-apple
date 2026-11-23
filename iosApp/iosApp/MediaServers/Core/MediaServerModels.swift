@@ -251,9 +251,36 @@ enum MediaServerError: LocalizedError {
     }
 }
 
+/// Number conversions that never trap. Server data is untrusted: an IPTV
+/// panel can send "NaN" or a 20-digit bitrate, and `Int(Double)` crashes on
+/// either.
+enum MSSafe {
+    static func int(_ value: Double) -> Int? {
+        guard value.isFinite, abs(value) < 9.0e15 else { return nil }
+        return Int(value)
+    }
+
+    static func int64(_ value: Double) -> Int64 {
+        guard value.isFinite else { return 0 }
+        return Int64(min(max(value, 0), 9.0e15))
+    }
+
+    static func multiply(_ value: Int, _ factor: Int) -> Int? {
+        let (result, overflow) = value.multipliedReportingOverflow(by: factor)
+        return overflow ? nil : result
+    }
+
+    /// A plausible duration in seconds (under four days), or nil.
+    static func duration(_ value: Double?) -> Double? {
+        guard let value, value.isFinite, value > 0, value < 345_600 else { return nil }
+        return value
+    }
+}
+
 enum MSFormat {
     static func runtime(_ seconds: Double) -> String {
-        let minutes = Int((seconds / 60).rounded())
+        guard let seconds = MSSafe.duration(seconds) else { return "" }
+        let minutes = MSSafe.int((seconds / 60).rounded()) ?? 0
         if minutes >= 60 {
             let h = minutes / 60, m = minutes % 60
             return m == 0 ? "\(h)h" : "\(h)h \(m)m"
@@ -279,8 +306,7 @@ enum MSFormat {
 
     /// "1:44:57" or "44:57".
     static func clock(_ seconds: Double) -> String {
-        guard seconds.isFinite, seconds >= 0 else { return "--:--" }
-        let total = Int(seconds)
+        guard seconds.isFinite, seconds >= 0, let total = MSSafe.int(min(seconds, 360_000)) else { return "--:--" }
         let h = total / 3600, m = (total / 60) % 60, s = total % 60
         return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
     }

@@ -60,6 +60,7 @@ struct MSAddIPTVView: View {
             }
         }
         .navigationTitle("IPTV")
+        .msScreen()
     }
 
     /// An M3U or player_api link carries the username and password.
@@ -151,6 +152,7 @@ struct MSAddEmbyView: View {
             }
         }
         .navigationTitle("Emby / Jellyfin")
+        .msScreen()
     }
 
     private func connect() {
@@ -220,6 +222,7 @@ struct MSAddPlexView: View {
             }
         }
         .navigationTitle("Plex")
+        .msScreen()
         .onAppear { if case .starting = phase { startPin() } }
         .onDisappear { pollTask?.cancel() }
     }

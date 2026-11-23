@@ -84,6 +84,7 @@ struct MediaServersHubView: View {
                 }
             }
             .navigationTitle("Emby · Plex · IPTV")
+            .msScreen()
             .toolbar {
                 #if os(iOS)
                 ToolbarItem(placement: .cancellationAction) {

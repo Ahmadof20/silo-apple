@@ -161,6 +161,7 @@ struct TVExternalPlayerView: View {
                 audioMenu.focused($focus, equals: .audio)
                 subtitleMenu.focused($focus, equals: .subtitles)
                 aiMenu.focused($focus, equals: .ai)
+                speedMenu
 
                 if let status = playback.aiStatus {
                     Text(status).font(.system(size: 22)).foregroundStyle(.secondary)
@@ -229,6 +230,30 @@ struct TVExternalPlayerView: View {
         }
     }
 
+    /// Playback speed, as in KSPlayer and most IPTV players.
+    private var speedMenu: some View {
+        Menu {
+            ForEach([0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { rate in
+                Button {
+                    playback.setRate(Float(rate))
+                } label: {
+                    if Float(rate) == playback.rate {
+                        Label(Self.rateLabel(rate), systemImage: "checkmark")
+                    } else {
+                        Text(Self.rateLabel(rate))
+                    }
+                }
+            }
+        } label: {
+            Text(Self.rateLabel(Double(playback.rate)))
+                .font(.system(size: 26, weight: .semibold).monospacedDigit())
+        }
+    }
+
+    static func rateLabel(_ rate: Double) -> String {
+        rate == 1 ? "1×" : String(format: "%g×", rate)
+    }
+
     static func trackName(_ track: TrackInfo) -> String {
         let language = track.language.flatMap { Locale.current.localizedString(forLanguageCode: $0) }
         let parts = [language, track.name.isEmpty ? nil : track.name, track.codec.uppercased()]
@@ -289,6 +314,7 @@ final class TVExternalPlayback {
     private(set) var sourceLine = ""
     let aiTranslation = MSAISubtitleTranslation()
     private(set) var aiLine: String?
+    private(set) var rate: Float = 1
 
     private var client: (any MediaServerClient)?
     private var item: MSItem?
@@ -391,6 +417,11 @@ final class TVExternalPlayback {
     }
 
     func selectAudio(_ index: Int) { engine?.selectAudioTrack(index: index) }
+
+    func setRate(_ value: Float) {
+        rate = value
+        engine?.setRate(value)
+    }
 
     func selectSubtitle(_ index: Int) {
         stopAI()

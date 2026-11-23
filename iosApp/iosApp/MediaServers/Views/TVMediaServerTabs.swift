@@ -80,6 +80,9 @@ struct TVMediaServerLibraryPage: View {
     let focusRequest: Int
     let isTopMenuFocused: Bool
     let onTopMenuFocusRequest: () -> Void
+    /// Set when the page is shown in a cover: opening a Silo title closes
+    /// the cover first. Nil pushes the Silo page directly.
+    var onOpenSilo: ((String) -> Void)? = nil
 
     @Environment(AppRouter.self) private var router
     @State private var items: [MSItem] = []
@@ -92,9 +95,10 @@ struct TVMediaServerLibraryPage: View {
     @FocusState private var focusedId: String?
 
     private static let pageSize = 60
-    private static let columnCount = 6
+    private static let columnCount = 7
+    private static let cardWidth: CGFloat = 220
     private let columns = Array(
-        repeating: GridItem(.fixed(MSMetrics.posterWidth), spacing: 48, alignment: .top),
+        repeating: GridItem(.fixed(cardWidth), spacing: 40, alignment: .top),
         count: columnCount
     )
 
@@ -130,6 +134,7 @@ struct TVMediaServerLibraryPage: View {
         .fullScreenCover(item: $serverDetail) { item in
             if let client {
                 MSTVServerDetailCover(client: client, item: item)
+                    .environmentObject(OverlayPrefsStore.shared)
             }
         }
     }
@@ -138,18 +143,25 @@ struct TVMediaServerLibraryPage: View {
         ScrollView(.vertical, showsIndicators: false) {
             LazyVGrid(columns: columns, alignment: .leading, spacing: 56) {
                 ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                    Button { open(item) } label: {
-                        MSPosterCard(item: item)
-                            .overlay {
-                                if openingId == item.id {
-                                    ProgressView()
-                                        .padding(24)
-                                        .background(.black.opacity(0.55), in: Circle())
-                                }
-                            }
+                    // Silo's own poster card, so the grid reads like Silo's library.
+                    TVMediaCard(
+                        title: item.title,
+                        posterUrl: item.posterURL?.absoluteString ?? "",
+                        mediaType: MSExternalRows.siloType(item.kind),
+                        year: item.year,
+                        userState: MediaItemUserState(played: item.isWatched, isFavorite: false, inWatchlist: false),
+                        action: { open(item) },
+                        cardWidth: Self.cardWidth,
+                        focusBinding: $focusedId,
+                        focusContentId: item.id
+                    )
+                    .overlay {
+                        if openingId == item.id {
+                            ProgressView()
+                                .padding(24)
+                                .background(.black.opacity(0.55), in: Circle())
+                        }
                     }
-                    .msCardButtonStyle()
-                    .focused($focusedId, equals: item.id)
                     .onMoveCommand { direction in
                         if direction == .up, index < Self.columnCount { onTopMenuFocusRequest() }
                     }
@@ -158,8 +170,8 @@ struct TVMediaServerLibraryPage: View {
                     }
                 }
             }
-            .padding(.horizontal, MSMetrics.edge)
-            .padding(.top, TVTopMenuLayout.contentTopInset)
+            .padding(.horizontal, SiloTheme.Skyline.safeAreaX)
+            .padding(.top, onOpenSilo == nil ? TVTopMenuLayout.contentTopInset : 80)
             .padding(.bottom, 80)
         }
         .scrollClipDisabled()
@@ -188,7 +200,7 @@ struct TVMediaServerLibraryPage: View {
         Task { @MainActor in
             defer { openingId = nil }
             if let contentId = await MSSiloBridge.shared.siloContentId(for: item, account: account) {
-                router.navigate(to: .itemDetail(contentId: contentId))
+                if let onOpenSilo { onOpenSilo(contentId) } else { router.navigate(to: .itemDetail(contentId: contentId)) }
             } else {
                 serverDetail = item
             }

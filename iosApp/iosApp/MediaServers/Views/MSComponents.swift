@@ -35,6 +35,23 @@ extension View {
 }
 
 /// Remote artwork with a quiet placeholder.
+extension View {
+    /// An opaque Silo page behind Emby, Plex, IPTV, and AI screens on Apple
+    /// TV. Without it the screen under the cover showed through the form
+    /// and the text ran into it.
+    @ViewBuilder
+    func msScreen() -> some View {
+        #if os(tvOS)
+        self
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .siloPageBackground()
+            .preferredColorScheme(.dark)
+        #else
+        self
+        #endif
+    }
+}
+
 struct MSArtwork: View {
     let url: URL?
     var systemImage: String = "film"

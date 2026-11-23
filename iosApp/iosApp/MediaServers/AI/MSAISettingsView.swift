@@ -79,6 +79,7 @@ struct MSAISettingsView: View {
                 }
             }
             .navigationTitle("مفاتيح الذكاء الاصطناعي")
+            .msScreen()
             #if os(iOS)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }

@@ -29,6 +29,7 @@ struct MSAccountHomeView: View {
             }
         }
         .navigationTitle(account.serverName)
+        .msScreen()
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 NavigationLink(value: MSRoute.search(account)) {
@@ -195,6 +196,7 @@ struct MSLibraryView: View {
             }
         }
         .navigationTitle(library.title)
+        .msScreen()
         .task { if items.isEmpty { await loadMore(reset: true) } }
     }
 
@@ -271,6 +273,7 @@ struct MSSearchView: View {
             .padding(MSMetrics.edge)
         }
         .navigationTitle("Search")
+        .msScreen()
         .searchable(text: $query, prompt: "Movies, shows, episodes")
         .task(id: query) {
             let text = query.trimmingCharacters(in: .whitespaces)

@@ -214,7 +214,6 @@ struct TVMainTabView: View {
     @State private var accountDirectory = AccountDirectory.shared
     @State private var librariesStaleSinceBackground = false
     @State private var registry = ServerRegistry.shared
-    @State private var mediaServerTabs = MSTVTabStore.shared
     /// Local, per-profile Audiobooks opt-in for the bar's Audiobooks tab.
     /// Kept here so `.task` can `refresh()` it for the now-known profile.
     @State private var navPrefs = AppNavPreferences.shared
@@ -412,8 +411,6 @@ struct TVMainTabView: View {
         ZStack(alignment: .top) {
             NavigationStack(path: $router.path) {
                 rootContent
-                    // Emby, Jellyfin, and Plex tabs follow the saved accounts.
-                    .modifier(MSTVTabRefresh())
                     .prefersDefaultFocus(router.path.isEmpty, in: shellFocusNamespace)
                     .onPreferenceChange(TVPagePanelOpenKey.self) { isOpen in
                         isBarLockedByPagePanel = isOpen
@@ -1337,16 +1334,12 @@ struct TVMainTabView: View {
     /// The bar's content tabs. Search and Profile sit outside this list, and
     /// Requests lives in the profile menu.
     private var visibleRoots: [TVRootDestination] {
-        var roots = TVRootDestination.visibleRoots(
+        // Silo's own bar. Emby, Plex, and IPTV titles appear as rows inside
+        // the Movies and Series tabs instead of tabs of their own.
+        TVRootDestination.visibleRoots(
             libraries: libraries,
             showAudiobooks: navPrefs.showAudiobooks
         )
-        // Emby, Jellyfin, and Plex libraries sit right after Silo's own
-        // library tabs, before For You and Calendar.
-        let serverRoots = mediaServerTabs.tabs.map(TVRootDestination.mediaServer)
-        let insertAt = roots.firstIndex(of: .recommendations) ?? roots.endIndex
-        roots.insert(contentsOf: serverRoots, at: insertAt)
-        return roots
     }
 
     private func tabType(for library: Library) -> TVLibraryTabType? {
