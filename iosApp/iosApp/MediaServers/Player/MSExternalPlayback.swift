@@ -24,6 +24,7 @@ final class MSExternalPlayback {
         let resume: Bool
         var lastSaved: Date = .distantPast
         var markedWatched = false
+        var stream: MSDirectStream?
     }
 
     private var entries: [String: Entry] = [:]
@@ -74,6 +75,7 @@ final class MSExternalPlayback {
     ) async throws -> PreparedPlayback {
         guard let entry = entries[id] else { throw PrepareError.expired }
         let stream = try await entry.client.directStream(for: entry.item)
+        entries[id]?.stream = stream
         let item = entry.item
         let info = stream.info
 
@@ -211,6 +213,91 @@ final class MSExternalPlayback {
                 Self.logger.debug("Resume save failed: \(error.localizedDescription, privacy: .public)")
             }
         }
+    }
+
+    // MARK: - AI subtitles
+
+    struct AISubtitle {
+        let url: URL
+        let label: String
+        let language: String
+    }
+
+    /// The title's subtitles translated into the viewer's language with
+    /// their own AI key, as an SRT file the player adds as a track. Nil when
+    /// no key is set, a subtitle in that language already exists, or the
+    /// source has no text subtitle to translate. `onStart` runs only when
+    /// work actually begins. A translated file is kept, so playing the
+    /// title again is instant.
+    func aiSubtitle(for id: String, onStart: @MainActor () -> Void) async throws -> AISubtitle? {
+        guard MSAISettings.isConfigured, let entry = entries[id], let stream = entry.stream else { return nil }
+        let target = MSAISettings.targetLanguage
+        let label = "\(MSAISettings.languageName(target)) · AI"
+        if stream.subtitles.contains(where: { Self.sameLanguage($0.language, target) }) { return nil }
+        let textual = stream.subtitles.filter { ref in
+            let codec = Self.codec(of: ref.url) ?? ""
+            return ["subrip", "webvtt"].contains(codec) || ref.url.absoluteString.lowercased().contains(".srt")
+        }
+        guard let source = textual.first(where: { Self.sameLanguage($0.language, "en") }) ?? textual.first else { return nil }
+
+        let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("ms-ai-subtitles", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let name = String("\(entry.client.account.id)-\(entry.item.id)-\(target)".map { $0.isLetter || $0.isNumber ? $0 : "_" })
+        let file = folder.appendingPathComponent(name + ".srt")
+        if FileManager.default.fileExists(atPath: file.path) {
+            return AISubtitle(url: file, label: label, language: target)
+        }
+
+        onStart()
+        let (data, _) = try await MSHTTP.session.data(from: source.url)
+        let cues = MSSubtitleParser.parse(String(decoding: data, as: UTF8.self))
+        guard !cues.isEmpty else { return nil }
+
+        // Batches of 40 lines, four at a time.
+        let batches: [[MSCue]] = stride(from: 0, to: cues.count, by: 40).map { Array(cues[$0..<min($0 + 40, cues.count)]) }
+        var translated = [[String]](repeating: [], count: batches.count)
+        try await withThrowingTaskGroup(of: (Int, [String]).self) { group in
+            var next = 0
+            for _ in 0..<min(4, batches.count) {
+                let index = next
+                let lines = batches[index].map(\.text)
+                next += 1
+                group.addTask { (index, try await MSAITranslator.shared.translate(lines)) }
+            }
+            while let (index, lines) = try await group.next() {
+                translated[index] = lines
+                if next < batches.count {
+                    let nextIndex = next
+                    let nextLines = batches[nextIndex].map(\.text)
+                    next += 1
+                    group.addTask { (nextIndex, try await MSAITranslator.shared.translate(nextLines)) }
+                }
+            }
+        }
+
+        var srt = ""
+        var number = 1
+        for (batch, lines) in zip(batches, translated) {
+            for (cue, line) in zip(batch, lines) {
+                srt += "\(number)\n\(Self.srtTime(cue.start)) --> \(Self.srtTime(cue.end))\n\(line)\n\n"
+                number += 1
+            }
+        }
+        try Data(srt.utf8).write(to: file, options: .atomic)
+        return AISubtitle(url: file, label: label, language: target)
+    }
+
+    nonisolated static func sameLanguage(_ code: String?, _ target: String) -> Bool {
+        guard let code = code?.lowercased(), !code.isEmpty else { return false }
+        let map = ["ara": "ar", "eng": "en", "fre": "fr", "fra": "fr", "spa": "es", "ger": "de", "deu": "de",
+                   "tur": "tr", "urd": "ur", "per": "fa", "fas": "fa", "ind": "id", "hin": "hi"]
+        return (map[code] ?? String(code.prefix(2))) == target
+    }
+
+    nonisolated static func srtTime(_ seconds: Double) -> String {
+        let total = MSSafe.int((max(seconds, 0) * 1000).rounded()) ?? 0
+        return String(format: "%02d:%02d:%02d,%03d", total / 3_600_000, total / 60_000 % 60, total / 1000 % 60, total % 1000)
     }
 
     func release(_ id: String) {

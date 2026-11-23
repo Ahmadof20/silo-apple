@@ -6625,6 +6625,9 @@ class PlayerViewModel {
                 self.metadata = prepared.playerMetadata()
                 self.pendingExternalSubtitles = session.subtitleUrls ?? []
                 self.knownExternalSubtitles = self.pendingExternalSubtitles
+                if let externalId = self.offlinePlaybackContext?.externalPlaybackId {
+                    self.startExternalAISubtitles(externalId)
+                }
                 self.currentWatchDetail = prepared.watchDetail
                 self.currentSelectedVersion = prepared.selectedVersion
                 self.activePreparedProtocolV3 = prepared.protocolV3
@@ -9422,6 +9425,47 @@ class PlayerViewModel {
                 ? plan.selectedSubtitleCombinedIndex.map { SubtitleTrackIdSpace.makeSidecarTrackId(urlIndex: $0) }
                 : nil
         )
+    }
+
+    /// Emby, Plex, and IPTV titles: subtitles translated with the viewer's
+    /// own AI key join the subtitle list as a sidecar track once ready,
+    /// through the same handoff Silo's server AI jobs use.
+    @ObservationIgnored private var externalAITask: Task<Void, Never>?
+
+    private func startExternalAISubtitles(_ externalId: String) {
+        externalAITask?.cancel()
+        externalAITask = Task { @MainActor [weak self] in
+            do {
+                let result = try await MSExternalPlaybackHook.aiSubtitle(id: externalId) { [weak self] in
+                    self?.showNotice(
+                        title: "ترجمة بالذكاء الاصطناعي",
+                        message: "تُترجم الترجمة الآن، وتظهر في قائمة الترجمات حين تجهز.",
+                        tone: .info,
+                        symbol: "translate",
+                        duration: 5
+                    )
+                }
+                guard let result, let self, !Task.isCancelled, !self.isDisposed,
+                      self.offlinePlaybackContext?.externalPlaybackId == externalId else { return }
+                self.registerCompletedAISubtitle(SidecarSubtitleDescriptor(
+                    index: 900,
+                    language: result.language,
+                    codec: "subrip",
+                    label: result.label,
+                    source: "external",
+                    forced: false,
+                    url: result.url
+                ))
+            } catch {
+                guard let self, !Task.isCancelled, !self.isDisposed else { return }
+                self.showNotice(
+                    title: "تعذرت الترجمة بالذكاء الاصطناعي",
+                    message: error.localizedDescription,
+                    tone: .warning,
+                    duration: 6
+                )
+            }
+        }
     }
 
     /// Completion handoff for a finished AI subtitle job: register the

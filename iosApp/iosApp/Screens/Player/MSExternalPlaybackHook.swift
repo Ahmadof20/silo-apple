@@ -51,4 +51,15 @@ enum MSExternalPlaybackHook {
         )
         #endif
     }
+
+    /// The title's subtitles translated with the viewer's own AI key, ready
+    /// to add as a track: file URL, label, language.
+    static func aiSubtitle(id: String, onStart: @MainActor () -> Void) async throws -> (url: URL, label: String, language: String)? {
+        #if os(macOS)
+        nil
+        #else
+        guard let result = try await MSExternalPlayback.shared.aiSubtitle(for: id, onStart: onStart) else { return nil }
+        return (result.url, result.label, result.language)
+        #endif
+    }
 }
