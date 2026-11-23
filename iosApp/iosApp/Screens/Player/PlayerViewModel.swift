@@ -1211,8 +1211,12 @@ class PlayerViewModel {
     private struct OfflinePlaybackContext {
         let mediaItemId: String
         let isServerPreparedFile: Bool
-        let owner: DownloadManager.OfflinePlaybackOwner
+        /// Nil for an Emby, Plex, or IPTV title (`externalPlaybackId`).
+        let owner: DownloadManager.OfflinePlaybackOwner?
         let trackPrefKey: String?
+        /// Set when the file comes from a media server rather than a
+        /// download; progress then goes to that server.
+        var externalPlaybackId: String? = nil
     }
     private var offlinePlaybackContext: OfflinePlaybackContext?
     /// Mirrors the server's default watched threshold (90%) so an offline
@@ -5873,6 +5877,7 @@ class PlayerViewModel {
             // A download has no connection to lose: its early end is a file
             // that stops short.
             let isDownload = lastLoadRequest?.offlineDownloadId != nil
+                && !MSExternalPlaybackHook.isExternal(lastLoadRequest?.offlineDownloadId)
             showNotice(
                 title: AppLanguage.string(
                     isDownload ? .playerNoticeDownloadIncompleteTitle : .playerNoticeConnectionLostTitle
@@ -6501,7 +6506,24 @@ class PlayerViewModel {
                 var preparedOfflineArtworkURL: URL?
                 // The estimate the start sends, for the plan's summary.
                 var probeEstimateKbps: Int?
-                if let offlineDownloadId = request.offlineDownloadId {
+                if let externalId = request.offlineDownloadId, MSExternalPlaybackHook.isExternal(externalId) {
+                    // An Emby, Plex, or IPTV file: the same local road a
+                    // download takes, with the media server's file.
+                    prepared = try await MSExternalPlaybackHook.prepare(
+                        id: externalId,
+                        startFromBeginning: request.startFromBeginning,
+                        resumePositionOverride: resumePositionOverride
+                    )
+                    preparedOfflineContext = OfflinePlaybackContext(
+                        mediaItemId: prepared.watchDetail.contentId,
+                        isServerPreparedFile: false,
+                        owner: nil,
+                        trackPrefKey: nil,
+                        externalPlaybackId: externalId
+                    )
+                    preparedOfflineArtworkURL = MSExternalPlaybackHook.artworkURL(for: externalId)
+                    BandwidthProbeScheduler.shared.playbackStarting(by: self)
+                } else if let offlineDownloadId = request.offlineDownloadId {
                     // Fully local prepare from the stored record + manifest.
                     // Must keep working in airplane mode, so nothing on this
                     // branch (or downstream of it while
@@ -7135,7 +7157,8 @@ class PlayerViewModel {
             preferredAudioTrackIndex: resolvedAudioTrackIndexForResume(),
             preferredSubtitleTrackIndex: resolvedSubtitleTrackIndexForResume(),
             preferredSidecarSubtitleTrackId: resolvedSidecarSubtitleTrackIdForResume(),
-            offlineDownloadId: keepingDownload ? lastLoadRequest.offlineDownloadId : nil,
+            offlineDownloadId: keepingDownload || MSExternalPlaybackHook.isExternal(lastLoadRequest.offlineDownloadId)
+                ? lastLoadRequest.offlineDownloadId : nil,
             serverSubtitlesDisabled: hasDisabledServerSubtitlesForResume
         )
     }
@@ -8929,13 +8952,13 @@ class PlayerViewModel {
     private func persistAudioSelection(_ track: PlayerTrack) {
         let ordinal = audioSelectionIndex(for: track)
         if let offline = offlinePlaybackContext {
-            guard let key = offline.trackPrefKey,
+            guard let key = offline.trackPrefKey, let owner = offline.owner,
                   let request = OfflineTrackPrefs.audioRequest(
                       track: track, ordinal: ordinal, shownTrackCount: audioTracks.count,
                       manifestTracks: currentSelectedVersion?.audioTracks,
                       sourceOrdinals: !offline.isServerPreparedFile
                   ) else { return }
-            DownloadManager.shared.recordTrackPref(request, key: key, in: \.audio, owner: offline.owner)
+            DownloadManager.shared.recordTrackPref(request, key: key, in: \.audio, owner: owner)
             return
         }
         guard let key = trackPrefPersistKey else { return }
@@ -8957,7 +8980,7 @@ class PlayerViewModel {
     private func persistSubtitleSelection(_ track: PlayerTrack?) {
         if let offline = offlinePlaybackContext {
             if let track, SubtitleTrackIdSpace.isAILive(track.trackId) { return }
-            guard let key = offline.trackPrefKey else { return }
+            guard let key = offline.trackPrefKey, let owner = offline.owner else { return }
             let request: SubtitlePrefRequest
             if let track {
                 guard let pick = OfflineTrackPrefs.subtitleRequest(track: track) else { return }
@@ -8965,7 +8988,7 @@ class PlayerViewModel {
             } else {
                 request = TrackSelectionPersistence.subtitleOffRequest()
             }
-            DownloadManager.shared.recordTrackPref(request, key: key, in: \.subtitle, owner: offline.owner)
+            DownloadManager.shared.recordTrackPref(request, key: key, in: \.subtitle, owner: owner)
             return
         }
         guard let write = subtitlePreferenceWrite(track) else { return }
@@ -10339,6 +10362,12 @@ class PlayerViewModel {
         requiresHeaderAuthenticatedMedia: Bool = false,
         allowsAuthorizedMediaOrigins: Bool = false
     ) async -> StreamRequest? {
+        // A media server's file goes to that server with its own token in the
+        // URL; Silo's sign-in never travels with it.
+        if MSExternalPlaybackHook.isExternalSession(session.sessionId) {
+            guard let url = URL(string: session.streamUrl) else { return nil }
+            return StreamRequest(url: url, headers: [:], serverUrl: "", capturedAuth: nil)
+        }
         let owner = await TokenStore.shared.captureOrdinaryRequestAuth()
         let serverUrl: String
         let token: String?
@@ -11356,11 +11385,20 @@ class PlayerViewModel {
         position: Double? = nil,
         markCompleted: Bool = false
     ) {
+        // A position passed in is a final write (close, end, remount).
+        let isFinalWrite = position != nil
         let position = position ?? currentTime
         guard position.isFinite, position >= 0 else { return }
         let duration = duration.isFinite && duration > 0 ? duration : 0
         let watched = markCompleted
             || (duration > 0 && position / duration > Self.defaultWatchedFraction)
+        if let externalId = context.externalPlaybackId {
+            MSExternalPlaybackHook.recordProgress(
+                id: externalId, position: position, duration: duration, completed: watched,
+                force: isFinalWrite
+            )
+            return
+        }
         DownloadManager.shared.recordOfflineProgress(
             mediaItemId: context.mediaItemId,
             position: position,

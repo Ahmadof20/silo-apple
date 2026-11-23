@@ -504,6 +504,10 @@ struct ContentView: View {
 
     var body: some View {
         sessionTaskContent
+        #if os(tvOS)
+        // Build-machine self-test only (`-AHSmokeTest`); idle otherwise.
+        .modifier(AHSmokeTest(router: router))
+        #endif
         // The speed scheduler starts out in the background and follows the
         // scene from its first phase, so a launch into the background reads
         // and tests nothing.

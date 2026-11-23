@@ -45,7 +45,10 @@ extension View {
         self
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .siloPageBackground()
-            .preferredColorScheme(.dark)
+            // Not `preferredColorScheme`: a cover that sets it hands the
+            // window back to the system's light look when it closes, and
+            // the page under it flashed white.
+            .environment(\.colorScheme, .dark)
         #else
         self
         #endif

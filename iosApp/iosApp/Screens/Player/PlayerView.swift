@@ -627,6 +627,8 @@ struct PlayerView: View {
             let touchedContentIds = viewModel.contentIdsNeedingDetailRefresh.isEmpty
                 ? Set([contentId])
                 : viewModel.contentIdsNeedingDetailRefresh
+            // Emby, Plex, and IPTV titles have no Silo page to refresh.
+            let siloContentIds = touchedContentIds.filter { !$0.hasPrefix("ms:") }
             Task { @MainActor in
                 await viewModel.waitForCleanupCompletion()
 
@@ -635,7 +637,7 @@ struct PlayerView: View {
                 // Continue Watching row produced by the completed write.
                 PersonalStateSync.invalidateDerivedLists()
 
-                await ItemDetailCache.shared.refreshAfterPlayback(contentIds: touchedContentIds)
+                await ItemDetailCache.shared.refreshAfterPlayback(contentIds: siloContentIds)
             }
             #endif
         }

@@ -1,0 +1,93 @@
+name: AH Apple TV simulator test
+
+# Builds the Apple TV app for the simulator, opens it with -AHSmokeTest (an
+# external title's page, then a sample MKV in Silo's player), and saves
+# screenshots, the app's log, and any crash report as artifacts.
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: GitHub Mac image
+        type: choice
+        default: macos-26
+        options: [macos-26, macos-latest, macos-15]
+
+jobs:
+  simulator:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Use the newest installed Xcode
+        run: |
+          XCODE="$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+          xcrun simctl list runtimes | grep -i tvos || true
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        working-directory: iosApp
+        run: xcodegen generate
+
+      - name: Build for the simulator
+        working-directory: iosApp
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project Silo.xcodeproj \
+            -scheme SiloTV \
+            -sdk appletvsimulator \
+            -destination "generic/platform=tvOS Simulator" \
+            -configuration Debug \
+            -derivedDataPath "$RUNNER_TEMP/dd" \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            > "$RUNNER_TEMP/build.log" 2>&1 || true
+          grep -nE "error:|fatal|BUILD" "$RUNNER_TEMP/build.log" | head -100 || true
+          ls "$RUNNER_TEMP/dd/Build/Products/Debug-appletvsimulator/" || { tail -100 "$RUNNER_TEMP/build.log"; exit 1; }
+
+      - name: Run the self-test
+        run: |
+          set -x
+          APP="$(ls -d "$RUNNER_TEMP"/dd/Build/Products/Debug-appletvsimulator/*.app | head -1)"
+          BUNDLE="$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Info.plist")"
+          EXE="$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$APP/Info.plist")"
+          RUNTIME="$(xcrun simctl list runtimes -j | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="tvOS" and x["isAvailable"]]; print(r[-1]["identifier"])')"
+          DEVICE="$(xcrun simctl list devicetypes -j | python3 -c 'import json,sys; d=[x["identifier"] for x in json.load(sys.stdin)["devicetypes"] if "Apple-TV-4K" in x["identifier"]]; print(d[-1])')"
+          UDID="$(xcrun simctl create AHTV "$DEVICE" "$RUNTIME")"
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl ui "$UDID" appearance light || true
+          xcrun simctl install "$UDID" "$APP"
+          mkdir -p "$RUNNER_TEMP/shots"
+          xcrun simctl launch --stdout="$RUNNER_TEMP/app-stdout.log" --stderr="$RUNNER_TEMP/app-stderr.log" "$UDID" "$BUNDLE" -AHSmokeTest
+          for i in $(seq -w 1 30); do
+            sleep 4
+            xcrun simctl io "$UDID" screenshot "$RUNNER_TEMP/shots/shot-$i.png" || true
+          done
+          xcrun simctl spawn "$UDID" launchctl list | grep -i "$BUNDLE" || echo "APP NOT RUNNING (crashed or exited)"
+          xcrun simctl spawn "$UDID" log show --last 3m --style compact --predicate "process == \"$EXE\"" > "$RUNNER_TEMP/app-system.log" 2>&1 || true
+          mkdir -p "$RUNNER_TEMP/crashes"
+          cp ~/Library/Logs/DiagnosticReports/*"$EXE"* "$RUNNER_TEMP/crashes/" 2>/dev/null || true
+          ls -la "$RUNNER_TEMP/shots" "$RUNNER_TEMP/crashes"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: simulator-results
+          path: |
+            ${{ runner.temp }}/shots
+            ${{ runner.temp }}/crashes
+            ${{ runner.temp }}/app-stdout.log
+            ${{ runner.temp }}/app-stderr.log
+            ${{ runner.temp }}/app-system.log
+            ${{ runner.temp }}/build.log
